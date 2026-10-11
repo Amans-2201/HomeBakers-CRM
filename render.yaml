@@ -3,7 +3,6 @@ services:
     name: home-bakers-orders-crm
     runtime: node
     plan: free
-    rootDir: orders_crm
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
