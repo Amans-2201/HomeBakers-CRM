@@ -2,9 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import pg from 'pg';
-import { validateOrderPayload } from './orders.js';
+import { validateManualOrderPayload, validateOrderPayload } from './orders.js';
 import { createSessionToken, passwordMatches, verifySessionToken } from './security.js';
 
 const { Pool } = pg;
@@ -126,6 +127,30 @@ function isValidOrderId(value) {
     && value.length <= 19
     && /^[1-9]\d*$/.test(value)
     && BigInt(value) <= 9223372036854775807n;
+}
+
+function appendPurchaseDateConditions(dateRange, parameters, dateColumn) {
+  const conditions = [];
+  if (dateRange.startDate) {
+    parameters.push(dateRange.startDate);
+    conditions.push(`${dateColumn} >= $${parameters.length}::date`);
+  }
+  if (dateRange.endDate) {
+    parameters.push(dateRange.endDate);
+    conditions.push(`${dateColumn} <= $${parameters.length}::date`);
+  }
+  return conditions.length ? `AND ${conditions.join(' AND ')}` : '';
+}
+
+function dateRangeParameters(dateRange) {
+  return [dateRange.startDate, dateRange.endDate].filter(value => value !== undefined);
+}
+
+function analyticsGranularity(dateRange) {
+  if (!dateRange.startDate || !dateRange.endDate) return 'month';
+  const days = (Date.parse(`${dateRange.endDate}T00:00:00Z`) - Date.parse(`${dateRange.startDate}T00:00:00Z`))
+    / 86400000;
+  return days <= 90 ? 'day' : 'month';
 }
 
 export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins = [] }) {
@@ -274,6 +299,11 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
     if (dateRange.error) return response.status(400).json({ error: dateRange.error });
     const parameters = [];
     const dateConditions = appendDateConditions(dateRange.value, parameters, 'o.created_at');
+    const purchaseDateConditions = appendPurchaseDateConditions(
+      dateRange.value,
+      [],
+      'p.purchased_on'
+    );
     try {
       const [totals, popularCookies] = await Promise.all([
         pool.query(
@@ -283,6 +313,20 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
                     FROM orders o
                     WHERE o.order_fulfillment = 'Yes' ${dateConditions}
                   ), 0)::int AS sales_total,
+                  COALESCE((
+                    SELECT SUM(p.unit_price * p.quantity)
+                    FROM inventory_purchases p
+                    WHERE TRUE ${purchaseDateConditions}
+                  ), 0)::numeric AS inventory_cost,
+                  ROUND((COALESCE((
+                    SELECT SUM(o.total)::numeric
+                    FROM orders o
+                    WHERE o.order_fulfillment = 'Yes' ${dateConditions}
+                  ), 0) - COALESCE((
+                    SELECT SUM(p.unit_price * p.quantity)
+                    FROM inventory_purchases p
+                    WHERE TRUE ${purchaseDateConditions}
+                  ), 0)), 2) AS profit_total,
                   COUNT(DISTINCT customer_id)::int AS customer_count
            FROM orders`,
           parameters
@@ -299,6 +343,82 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
     } catch (error) {
       console.error('Could not load CRM summary:', error);
       response.status(500).json({ error: 'Could not load dashboard summary.' });
+    }
+  });
+
+  app.get('/api/admin/analytics', requireAdmin, async (request, response) => {
+    const dateRange = parseDateRange(request.query);
+    if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+    const orderDateParameters = [];
+    const purchaseDateParameters = [];
+    const orderDateConditions = appendDateConditions(dateRange.value, orderDateParameters, 'o.created_at');
+    const customerDateConditions = appendDateConditions(dateRange.value, [], 'o.created_at');
+    const cookieDateConditions = appendDateConditions(dateRange.value, [], 'o.created_at');
+    const purchaseDateConditions = appendPurchaseDateConditions(
+      dateRange.value,
+      purchaseDateParameters,
+      'p.purchased_on'
+    );
+    const parameters = dateRangeParameters(dateRange.value);
+    const granularity = analyticsGranularity(dateRange.value);
+
+    try {
+      const [salesRows, purchaseRows, cookieRows, customerRows] = await Promise.all([
+        pool.query(
+          `SELECT DATE_TRUNC('${granularity}', o.created_at AT TIME ZONE 'Asia/Kolkata')::date::text AS period,
+                  SUM(o.total)::int AS sales
+           FROM orders o
+           WHERE o.order_fulfillment = 'Yes' ${orderDateConditions}
+           GROUP BY 1
+           ORDER BY 1`,
+          parameters
+        ),
+        pool.query(
+          `SELECT p.purchased_on::text AS period,
+                  SUM(p.unit_price * p.quantity)::numeric(14, 2) AS cost
+           FROM inventory_purchases p
+           WHERE TRUE ${purchaseDateConditions}
+           GROUP BY 1
+           ORDER BY 1`,
+          parameters
+        ),
+        pool.query(
+          `SELECT oi.cookie_name, SUM(oi.quantity)::int AS quantity
+           FROM order_items oi
+           JOIN orders o ON o.id = oi.order_id
+           WHERE o.order_fulfillment = 'Yes' ${cookieDateConditions}
+           GROUP BY oi.cookie_name
+           ORDER BY quantity DESC, oi.cookie_name`,
+          parameters
+        ),
+        pool.query(
+          `SELECT c.id, c.name AS customer_name, COUNT(o.id)::int AS order_count
+           FROM orders o
+           JOIN customers c ON c.id = o.customer_id
+           WHERE TRUE ${customerDateConditions}
+           GROUP BY c.id, c.name
+           ORDER BY order_count DESC, c.name ASC
+           LIMIT 40`,
+          parameters
+        )
+      ]);
+
+      const periods = new Map();
+      for (const row of salesRows.rows) periods.set(row.period, { period: row.period, sales: row.sales, cost: 0 });
+      for (const row of purchaseRows.rows) {
+        const period = granularity === 'month' ? row.period.slice(0, 7) : row.period;
+        const current = periods.get(period) || { period, sales: 0, cost: 0 };
+        current.cost = Number(row.cost);
+        periods.set(period, current);
+      }
+      return response.json({
+        salesCosts: [...periods.values()].sort((a, b) => a.period.localeCompare(b.period)),
+        cookieSales: cookieRows.rows,
+        customerOrders: customerRows.rows
+      });
+    } catch (error) {
+      console.error('Could not load CRM analytics:', error);
+      return response.status(500).json({ error: 'Could not load dashboard charts.' });
     }
   });
 
@@ -347,6 +467,135 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
     } catch (error) {
       console.error('Could not load CRM orders:', error);
       response.status(500).json({ error: 'Could not load orders.' });
+    }
+  });
+
+  app.post('/api/admin/orders', ensureSameOrigin, requireAdmin, async (request, response) => {
+    const validated = validateManualOrderPayload(request.body);
+    if (validated.error) return response.status(400).json({ error: validated.error });
+
+    const { customer, order, items } = validated.value;
+    let connection;
+    let transactionStarted = false;
+    try {
+      connection = await pool.connect();
+      await connection.query('BEGIN');
+      transactionStarted = true;
+      const customerResult = await connection.query(
+        `INSERT INTO customers (name, phone)
+         VALUES ($1, $2)
+         ON CONFLICT (phone) DO UPDATE
+         SET name = EXCLUDED.name, updated_at = NOW()
+         RETURNING id`,
+        [customer.name, customer.phone]
+      );
+      const orderResult = await connection.query(
+        `INSERT INTO orders (
+           order_ref, customer_id, fulfillment, address, pincode,
+           items_subtotal, delivery_fee, total
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [
+          randomUUID(), customerResult.rows[0].id, order.fulfillment, order.address,
+          order.pincode, order.subtotal, order.deliveryFee, order.total
+        ]
+      );
+
+      const orderId = orderResult.rows[0].id;
+      for (const item of items) {
+        await connection.query(
+          `INSERT INTO order_items (order_id, cookie_name, unit_price, quantity, line_total)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [orderId, item.name, item.unitPrice, item.quantity, item.lineTotal]
+        );
+      }
+      await connection.query('COMMIT');
+      transactionStarted = false;
+      return response.status(201).json({ saved: true, orderId });
+    } catch (error) {
+      if (connection && transactionStarted) {
+        try {
+          await connection.query('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('Could not roll back failed manual CRM order:', rollbackError);
+        }
+      }
+      console.error('Could not save manual CRM order:', error);
+      return response.status(500).json({ error: 'The manual order could not be saved.' });
+    } finally {
+      connection?.release();
+    }
+  });
+
+  app.get('/api/admin/inventory', requireAdmin, async (request, response) => {
+    const dateRange = parseDateRange(request.query);
+    if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+    const parameters = [];
+    const dateConditions = appendPurchaseDateConditions(dateRange.value, parameters, 'p.purchased_on');
+    parameters.push(parsePositiveLimit(request.query.limit));
+    try {
+      const result = await pool.query(
+        `SELECT p.id, p.item_name, p.unit_price, p.quantity, p.purchased_on,
+                ROUND(p.unit_price * p.quantity, 2) AS total_cost
+         FROM inventory_purchases p
+         WHERE TRUE ${dateConditions}
+         ORDER BY p.purchased_on DESC, p.id DESC
+         LIMIT $${parameters.length}`,
+        parameters
+      );
+      return response.json({ purchases: result.rows });
+    } catch (error) {
+      console.error('Could not load CRM inventory purchases:', error);
+      return response.status(500).json({ error: 'Could not load inventory purchases.' });
+    }
+  });
+
+  app.post('/api/admin/inventory', ensureSameOrigin, requireAdmin, async (request, response) => {
+    const { itemName, unitPrice, quantity, purchaseDate } = request.body || {};
+    const normalizedName = typeof itemName === 'string' ? itemName.trim() : '';
+    const priceInCents = typeof unitPrice === 'number' && Number.isFinite(unitPrice)
+      ? Math.round(unitPrice * 100)
+      : 0;
+    const hasValidPricePrecision = typeof unitPrice === 'number'
+      && Math.abs(unitPrice * 100 - priceInCents) < 0.000001;
+    if (!normalizedName || normalizedName.length > 120) {
+      return response.status(400).json({ error: 'Item name must be between 1 and 120 characters.' });
+    }
+    if (!hasValidPricePrecision || priceInCents < 1 || priceInCents > 999999999999) {
+      return response.status(400).json({ error: 'Unit price must be a positive INR amount.' });
+    }
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000000) {
+      return response.status(400).json({ error: 'Quantity must be a whole number between 1 and 1,000,000.' });
+    }
+    if (typeof purchaseDate !== 'string' || !parseDateRange({ startDate: purchaseDate }).value) {
+      return response.status(400).json({ error: 'Purchase date must be a valid date in YYYY-MM-DD format.' });
+    }
+    try {
+      const result = await pool.query(
+        `INSERT INTO inventory_purchases (item_name, unit_price, quantity, purchased_on)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, item_name, unit_price, quantity, purchased_on,
+                   ROUND(unit_price * quantity, 2) AS total_cost`,
+        [normalizedName, (priceInCents / 100).toFixed(2), quantity, purchaseDate]
+      );
+      return response.status(201).json({ purchase: result.rows[0] });
+    } catch (error) {
+      console.error('Could not record CRM inventory purchase:', error);
+      return response.status(500).json({ error: 'Could not record inventory purchase.' });
+    }
+  });
+
+  app.delete('/api/admin/inventory/:id', ensureSameOrigin, requireAdmin, async (request, response) => {
+    const { id } = request.params;
+    if (!isValidOrderId(id)) return response.status(400).json({ error: 'Purchase ID is invalid.' });
+    try {
+      const result = await pool.query('DELETE FROM inventory_purchases WHERE id = $1 RETURNING id', [id]);
+      if (!result.rowCount) return response.status(404).json({ error: 'Inventory purchase not found.' });
+      return response.json({ deleted: true, purchaseId: result.rows[0].id });
+    } catch (error) {
+      console.error('Could not delete CRM inventory purchase:', error);
+      return response.status(500).json({ error: 'Could not delete inventory purchase.' });
     }
   });
 

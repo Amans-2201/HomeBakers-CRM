@@ -44,3 +44,6 @@ Public submissions are limited to the five products and current catalog prices, 
 - Cookie varieties and quantities, subtotal, delivery fee, total, and order timestamp.
 - Dashboard totals, top-selling cookies, recent orders, customer name/phone search, and a date-range filter. Sales include only orders marked fulfilled (`Yes`) within the selected dates.
 - Admin order deletion and fulfillment-status updates from the dashboard.
+- Manual call-order entry for existing catalog products, with trusted prices and pickup/delivery details.
+- Inventory purchase records with item name, unit price in INR, quantity, and purchase date. The Profit card subtracts inventory purchase cost from fulfilled sales; when a date range is selected, it uses purchases from that same range.
+- Interactive dashboard charts compare sales with inventory costs, show the sales trend, cookie varieties sold, and order counts by customer. Chart data follows the selected date range.

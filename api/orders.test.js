@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateOrderPayload } from './orders.js';
+import { validateManualOrderPayload, validateOrderPayload } from './orders.js';
 import { createSessionToken, passwordMatches, verifySessionToken } from './security.js';
 import { createApp } from './server.js';
 
@@ -91,6 +91,51 @@ test('rejects tampered products and invalid quantities', () => {
   }).error, /quantities/i);
 });
 
+test('validates manual call orders and calculates trusted catalog totals', () => {
+  const result = validateManualOrderPayload({
+    customer: { name: '  Call customer ', phone: '+91 98765 43210' },
+    fulfillment: 'delivery',
+    address: '31 Baker Street',
+    pincode: '248001',
+    deliveryFee: 75,
+    items: [
+      { name: 'Vanilla Butter Cookies', quantity: 2, unitPrice: 1 },
+      { name: 'Choco Chip Cookies', quantity: 1 }
+    ]
+  });
+  assert.deepEqual(result.value.customer, { name: 'Call customer', phone: '+91 98765 43210' });
+  assert.equal(result.value.order.subtotal, 700);
+  assert.equal(result.value.order.total, 775);
+  assert.deepEqual(result.value.items[0], {
+    name: 'Vanilla Butter Cookies',
+    unitPrice: 220,
+    quantity: 2,
+    lineTotal: 440
+  });
+});
+
+test('rejects call orders with missing delivery address, invalid item, or invalid pickup fee', () => {
+  const details = {
+    customer: { name: 'Call customer', phone: '9876543210' },
+    fulfillment: 'delivery',
+    address: '',
+    deliveryFee: 100,
+    items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
+  };
+  assert.match(validateManualOrderPayload(details).error, /address is required/i);
+  assert.match(validateManualOrderPayload({
+    ...details,
+    fulfillment: 'pickup',
+    address: '',
+    deliveryFee: 1
+  }).error, /pickup orders/i);
+  assert.match(validateManualOrderPayload({
+    ...details,
+    address: 'Valid address',
+    items: [{ name: 'Unknown item', quantity: 1 }]
+  }).error, /varieties are invalid/i);
+});
+
 test('verifies expiring signed admin sessions and password comparison', () => {
   const secret = 'private-session-secret-string-for-test';
   const token = createSessionToken(secret, 5000);
@@ -107,7 +152,44 @@ test('requires a valid admin session to read dashboard data', async () => {
     async query(sql, parameters = []) {
       statements.push({ sql, parameters });
       if (sql.includes('COUNT(*)')) {
-        return { rows: [{ order_count: 0, sales_total: 0, customer_count: 0 }] };
+        return {
+          rows: [{
+            order_count: 0,
+            sales_total: 0,
+            inventory_cost: '0.00',
+            profit_total: '0.00',
+            customer_count: 0
+          }]
+        };
+      }
+      if (sql.includes('DATE_TRUNC(')) {
+        return { rows: [{ period: '2026-10-01', sales: 440 }] };
+      }
+      if (sql.includes('SELECT p.purchased_on::text')) {
+        return { rows: [{ period: '2026-10-01', cost: '125.50' }] };
+      }
+      if (sql.includes('SELECT oi.cookie_name')) {
+        return { rows: [{ cookie_name: 'Vanilla Butter Cookies', quantity: 2 }] };
+      }
+      if (sql.includes('COUNT(o.id)::int AS order_count')) {
+        return { rows: [{ id: '7', customer_name: 'Aman Baker', order_count: 2 }] };
+      }
+      if (sql.includes('SELECT p.id')) return { rows: [] };
+      if (sql.includes('INSERT INTO inventory_purchases')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: '8',
+            item_name: parameters[0],
+            unit_price: parameters[1],
+            quantity: parameters[2],
+            purchased_on: parameters[3],
+            total_cost: '13.00'
+          }]
+        };
+      }
+      if (sql.includes('DELETE FROM inventory_purchases')) {
+        return { rowCount: 1, rows: [{ id: '8' }] };
       }
       if (sql.includes('UPDATE orders')) {
         return { rowCount: 1, rows: [{ id: '1', order_fulfillment: parameters[0] }] };
@@ -116,6 +198,17 @@ test('requires a valid admin session to read dashboard data', async () => {
         return { rowCount: 1, rows: [{ id: '1' }] };
       }
       return { rows: [] };
+    },
+    async connect() {
+      return {
+        async query(sql, parameters = []) {
+          statements.push({ sql, parameters });
+          if (sql.includes('INSERT INTO customers')) return { rows: [{ id: '7' }] };
+          if (sql.includes('INSERT INTO orders')) return { rows: [{ id: '42' }] };
+          return { rows: [] };
+        },
+        release() {}
+      };
     }
   };
   const server = createApp({
@@ -150,6 +243,8 @@ test('requires a valid admin session to read dashboard data', async () => {
     assert.deepEqual(await dashboard.json(), {
       order_count: 0,
       sales_total: 0,
+      inventory_cost: '0.00',
+      profit_total: '0.00',
       customer_count: 0,
       popularCookies: []
     });
@@ -169,6 +264,29 @@ test('requires a valid admin session to read dashboard data', async () => {
     );
     assert.match(salesQuery.sql, /o\.order_fulfillment = 'Yes'/);
     assert.deepEqual(salesQuery.parameters, ['2026-10-01', '2026-10-14']);
+    assert.match(salesQuery.sql, /p\.purchased_on >= \$1::date/);
+    assert.match(salesQuery.sql, /p\.purchased_on <= \$2::date/);
+
+    const analyticsResponse = await fetch(
+      `${baseUrl}/api/admin/analytics?startDate=2026-10-01&endDate=2026-10-14`,
+      { headers: { Cookie: cookie } }
+    );
+    assert.equal(analyticsResponse.status, 200);
+    assert.deepEqual(await analyticsResponse.json(), {
+      salesCosts: [{ period: '2026-10-01', sales: 440, cost: 125.5 }],
+      cookieSales: [{ cookie_name: 'Vanilla Butter Cookies', quantity: 2 }],
+      customerOrders: [{ id: '7', customer_name: 'Aman Baker', order_count: 2 }]
+    });
+    const analyticsQueries = statements.filter(statement =>
+      statement.sql.includes('DATE_TRUNC(')
+      || statement.sql.includes('SELECT p.purchased_on::text')
+      || statement.sql.includes('SELECT oi.cookie_name')
+      || statement.sql.includes('COUNT(o.id)::int AS order_count')
+    );
+    assert.equal(analyticsQueries.length, 4);
+    assert.ok(analyticsQueries.every(statement =>
+      JSON.stringify(statement.parameters) === JSON.stringify(['2026-10-01', '2026-10-14'])
+    ));
 
     const filteredOrders = await fetch(
       `${baseUrl}/api/admin/orders?limit=10&search=Aman&startDate=2026-10-01&endDate=2026-10-14`,
@@ -203,6 +321,75 @@ test('requires a valid admin session to read dashboard data', async () => {
     });
     assert.equal(deletedOrder.status, 200);
     assert.deepEqual(await deletedOrder.json(), { deleted: true, orderId: '1' });
+
+    const invalidManualOrder = await fetch(`${baseUrl}/api/admin/orders`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer: { name: 'Call customer', phone: '9876543210' },
+        fulfillment: 'delivery',
+        deliveryFee: 100,
+        items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
+      })
+    });
+    assert.equal(invalidManualOrder.status, 400);
+
+    const manualOrder = await fetch(`${baseUrl}/api/admin/orders`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer: { name: 'Call customer', phone: '9876543210' },
+        fulfillment: 'pickup',
+        deliveryFee: 0,
+        items: [{ name: 'Vanilla Butter Cookies', quantity: 2, unitPrice: 1 }]
+      })
+    });
+    assert.equal(manualOrder.status, 201);
+    assert.deepEqual(await manualOrder.json(), { saved: true, orderId: '42' });
+    const manualOrderInsert = statements.find(statement => statement.sql.includes('INSERT INTO orders'));
+    assert.equal(manualOrderInsert.parameters[5], 440);
+    assert.equal(manualOrderInsert.parameters[7], 440);
+    const itemInsert = statements.find(statement => statement.sql.includes('INSERT INTO order_items'));
+    assert.deepEqual(itemInsert.parameters.slice(1), ['Vanilla Butter Cookies', 220, 2, 440]);
+
+    const filteredInventory = await fetch(
+      `${baseUrl}/api/admin/inventory?startDate=2026-10-01&endDate=2026-10-14`,
+      { headers: { Cookie: cookie } }
+    );
+    assert.equal(filteredInventory.status, 200);
+    const inventoryQuery = statements.find(statement => statement.sql.includes('SELECT p.id'));
+    assert.match(inventoryQuery.sql, /p\.purchased_on >= \$1::date/);
+    assert.match(inventoryQuery.sql, /p\.purchased_on <= \$2::date/);
+    assert.deepEqual(inventoryQuery.parameters, ['2026-10-01', '2026-10-14', 50]);
+
+    const invalidPurchaseDate = await fetch(`${baseUrl}/api/admin/inventory`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemName: 'Flour', unitPrice: 3.25, quantity: 4, purchaseDate: '2026-02-30' })
+    });
+    assert.equal(invalidPurchaseDate.status, 400);
+
+    const purchase = await fetch(`${baseUrl}/api/admin/inventory`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemName: 'Flour', unitPrice: 3.25, quantity: 4, purchaseDate: '2026-10-14' })
+    });
+    assert.equal(purchase.status, 201);
+    assert.deepEqual((await purchase.json()).purchase, {
+      id: '8',
+      item_name: 'Flour',
+      unit_price: '3.25',
+      quantity: 4,
+      purchased_on: '2026-10-14',
+      total_cost: '13.00'
+    });
+
+    const deletedPurchase = await fetch(`${baseUrl}/api/admin/inventory/8`, {
+      method: 'DELETE',
+      headers: { Cookie: cookie }
+    });
+    assert.equal(deletedPurchase.status, 200);
+    assert.deepEqual(await deletedPurchase.json(), { deleted: true, purchaseId: '8' });
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

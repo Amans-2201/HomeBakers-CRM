@@ -104,3 +104,77 @@ export function validateOrderPayload(payload) {
     }
   };
 }
+
+export function validateManualOrderPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return fail('Order details are invalid.');
+  }
+
+  const { customer, fulfillment, address, pincode, deliveryFee, items } = payload;
+  if (!customer || typeof customer !== 'object' || Array.isArray(customer)) {
+    return fail('Customer details are missing.');
+  }
+  const name = typeof customer.name === 'string' ? customer.name.trim() : '';
+  const phone = typeof customer.phone === 'string' ? customer.phone.trim() : '';
+  const phoneDigits = phone.replace(/\D/g, '');
+  if (!name || name.length > 120) return fail('Please provide a valid customer name.');
+  if (!phone || phone.length > 30 || phoneDigits.length < 7 || phoneDigits.length > 15) {
+    return fail('Please provide a valid customer phone number.');
+  }
+  if (!['delivery', 'pickup'].includes(fulfillment)) {
+    return fail('Order type must be delivery or pickup.');
+  }
+
+  const normalizedAddress = typeof address === 'string' ? address.trim() : '';
+  const normalizedPincode = typeof pincode === 'string' ? pincode.trim() : '';
+  if (normalizedAddress.length > 500 || normalizedPincode.length > 20) {
+    return fail('Delivery address details are too long.');
+  }
+  if (fulfillment === 'delivery' && !normalizedAddress) {
+    return fail('A delivery address is required for delivery orders.');
+  }
+  if (!Number.isSafeInteger(deliveryFee) || deliveryFee < 0 || deliveryFee > 10000) {
+    return fail('Delivery fee must be a whole INR amount between 0 and 10,000.');
+  }
+  if (fulfillment === 'pickup' && deliveryFee !== 0) {
+    return fail('Pickup orders cannot have a delivery fee.');
+  }
+  if (!Array.isArray(items) || items.length === 0 || items.length > Object.keys(COOKIE_CATALOG).length) {
+    return fail('Order must contain one or more valid cookie varieties.');
+  }
+
+  const seenItems = new Set();
+  const normalizedItems = [];
+  let subtotal = 0;
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return fail('One or more cookie items are invalid.');
+    }
+    const unitPrice = COOKIE_CATALOG[item.name];
+    if (unitPrice === undefined || seenItems.has(item.name)) {
+      return fail('One or more cookie varieties are invalid.');
+    }
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) {
+      return fail('Cookie quantities must be between 1 and 99.');
+    }
+    seenItems.add(item.name);
+    const lineTotal = unitPrice * item.quantity;
+    subtotal += lineTotal;
+    normalizedItems.push({ name: item.name, unitPrice, quantity: item.quantity, lineTotal });
+  }
+
+  return {
+    value: {
+      customer: { name, phone },
+      order: {
+        fulfillment,
+        address: normalizedAddress,
+        pincode: normalizedPincode,
+        deliveryFee,
+        subtotal,
+        total: subtotal + deliveryFee
+      },
+      items: normalizedItems
+    }
+  };
+}

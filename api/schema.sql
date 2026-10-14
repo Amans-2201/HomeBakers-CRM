@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS order_items (
     line_total INTEGER NOT NULL CHECK (line_total = unit_price * quantity)
 );
 
+CREATE TABLE IF NOT EXISTS inventory_purchases (
+    id BIGSERIAL PRIMARY KEY,
+    item_name TEXT NOT NULL CHECK (char_length(item_name) BETWEEN 1 AND 120),
+    unit_price NUMERIC(12, 2) NOT NULL CHECK (unit_price > 0),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    purchased_on DATE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS orders_customer_id_idx ON orders (customer_id);
 CREATE INDEX IF NOT EXISTS order_items_cookie_name_idx ON order_items (cookie_name);
+CREATE INDEX IF NOT EXISTS inventory_purchases_purchased_on_idx ON inventory_purchases (purchased_on DESC);
