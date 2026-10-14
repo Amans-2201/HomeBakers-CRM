@@ -554,6 +554,11 @@ function Dashboard({ onLogout }) {
         <SummaryCard label="Orders recorded" value={summary ? summary.order_count : '—'} detail="All-time orders" />
         <SummaryCard label="Sales value" value={summary ? currency.format(summary.sales_total) : '—'} detail="Fulfilled orders, incl. delivery, in selected dates" />
         <SummaryCard
+          label="Total cost"
+          value={summary ? currency.format(Number(summary.inventory_cost)) : '—'}
+          detail="Inventory purchases in selected dates"
+        />
+        <SummaryCard
           label="Profit"
           value={summary ? currency.format(Number(summary.profit_total)) : '—'}
           detail={summary ? `${currency.format(summary.sales_total)} sales − ${currency.format(Number(summary.inventory_cost))} inventory` : 'Sales minus inventory cost'}

@@ -111,7 +111,7 @@ h1, h2, p { margin-top: 0; }
 .welcome-row .muted { margin: 0; }
 .live-indicator { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 5px; color: #61755f; font-size: 11px; }
 .live-indicator span { width: 7px; height: 7px; border-radius: 50%; background: #65a477; }
-.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+.summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; }
 .summary-card, .panel { border: 1px solid var(--line); border-radius: 15px; background: var(--white); }
 .summary-card { padding: 18px 20px; }
 .summary-card p { margin: 0 0 9px; color: var(--muted); font-size: 12px; }
