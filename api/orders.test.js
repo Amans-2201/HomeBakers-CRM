@@ -102,10 +102,18 @@ test('verifies expiring signed admin sessions and password comparison', () => {
 });
 
 test('requires a valid admin session to read dashboard data', async () => {
+  const statements = [];
   const pool = {
-    async query(sql) {
+    async query(sql, parameters = []) {
+      statements.push({ sql, parameters });
       if (sql.includes('COUNT(*)')) {
         return { rows: [{ order_count: 0, sales_total: 0, customer_count: 0 }] };
+      }
+      if (sql.includes('UPDATE orders')) {
+        return { rowCount: 1, rows: [{ id: '1', order_fulfillment: parameters[0] }] };
+      }
+      if (sql.includes('DELETE FROM orders')) {
+        return { rowCount: 1, rows: [{ id: '1' }] };
       }
       return { rows: [] };
     }
@@ -145,6 +153,56 @@ test('requires a valid admin session to read dashboard data', async () => {
       customer_count: 0,
       popularCookies: []
     });
+
+    const invalidDate = await fetch(`${baseUrl}/api/admin/summary?startDate=2026-02-30`, {
+      headers: { Cookie: cookie }
+    });
+    assert.equal(invalidDate.status, 400);
+
+    const filteredSummary = await fetch(
+      `${baseUrl}/api/admin/summary?startDate=2026-10-01&endDate=2026-10-14`,
+      { headers: { Cookie: cookie } }
+    );
+    assert.equal(filteredSummary.status, 200);
+    const salesQuery = statements.find(
+      statement => statement.sql.includes('SUM(o.total)') && statement.sql.includes('Asia/Kolkata')
+    );
+    assert.match(salesQuery.sql, /o\.order_fulfillment = 'Yes'/);
+    assert.deepEqual(salesQuery.parameters, ['2026-10-01', '2026-10-14']);
+
+    const filteredOrders = await fetch(
+      `${baseUrl}/api/admin/orders?limit=10&search=Aman&startDate=2026-10-01&endDate=2026-10-14`,
+      { headers: { Cookie: cookie } }
+    );
+    assert.equal(filteredOrders.status, 200);
+    const ordersQuery = statements.find(statement => statement.sql.includes('SELECT o.id'));
+    assert.match(ordersQuery.sql, /o\.created_at >=/);
+    assert.match(ordersQuery.sql, /o\.created_at </);
+    assert.deepEqual(ordersQuery.parameters, ['2026-10-01', '2026-10-14', '%Aman%', 10]);
+
+    const invalidFulfillment = await fetch(`${baseUrl}/api/admin/orders/1`, {
+      method: 'PATCH',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_fulfillment: 'delivery' })
+    });
+    assert.equal(invalidFulfillment.status, 400);
+
+    const updatedOrder = await fetch(`${baseUrl}/api/admin/orders/1`, {
+      method: 'PATCH',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_fulfillment: 'No' })
+    });
+    assert.equal(updatedOrder.status, 200);
+    assert.deepEqual(await updatedOrder.json(), {
+      order: { id: '1', order_fulfillment: 'No' }
+    });
+
+    const deletedOrder = await fetch(`${baseUrl}/api/admin/orders/1`, {
+      method: 'DELETE',
+      headers: { Cookie: cookie }
+    });
+    assert.equal(deletedOrder.status, 200);
+    assert.deepEqual(await deletedOrder.json(), { deleted: true, orderId: '1' });
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

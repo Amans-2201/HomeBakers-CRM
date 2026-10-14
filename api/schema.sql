@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS orders (
     order_ref UUID NOT NULL UNIQUE,
     customer_id BIGINT NOT NULL REFERENCES customers(id),
     fulfillment TEXT NOT NULL CHECK (fulfillment IN ('delivery', 'pickup')),
+    order_fulfillment TEXT NOT NULL DEFAULT 'Yes'
+        CONSTRAINT orders_order_fulfillment_check CHECK (order_fulfillment IN ('Yes', 'No')),
     address TEXT NOT NULL DEFAULT '',
     pincode TEXT NOT NULL DEFAULT '',
     delivery_latitude DOUBLE PRECISION,
@@ -22,6 +24,16 @@ CREATE TABLE IF NOT EXISTS orders (
     status TEXT NOT NULL DEFAULT 'placed',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_fulfillment TEXT NOT NULL DEFAULT 'Yes';
+
+DO $$
+BEGIN
+    ALTER TABLE orders
+        ADD CONSTRAINT orders_order_fulfillment_check CHECK (order_fulfillment IN ('Yes', 'No'));
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS order_items (
     id BIGSERIAL PRIMARY KEY,

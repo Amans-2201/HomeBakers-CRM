@@ -84,16 +84,26 @@ function Dashboard({ onLogout }) {
   const [summary, setSummary] = useState(null);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [busyOrderId, setBusyOrderId] = useState(null);
 
-  const loadDashboard = useCallback(async (query = '') => {
+  const loadDashboard = useCallback(async (query = '', fromDate = '', toDate = '') => {
     setLoading(true);
     setError('');
     try {
+      const filters = new URLSearchParams();
+      if (fromDate) filters.set('startDate', fromDate);
+      if (toDate) filters.set('endDate', toDate);
+      const dateQuery = filters.toString();
+      const orderQuery = new URLSearchParams({ limit: '100', search: query });
+      if (fromDate) orderQuery.set('startDate', fromDate);
+      if (toDate) orderQuery.set('endDate', toDate);
       const [nextSummary, nextOrders] = await Promise.all([
-        apiRequest('/api/admin/summary'),
-        apiRequest(`/api/admin/orders?limit=100&search=${encodeURIComponent(query)}`)
+        apiRequest(`/api/admin/summary${dateQuery ? `?${dateQuery}` : ''}`),
+        apiRequest(`/api/admin/orders?${orderQuery}`)
       ]);
       setSummary(nextSummary);
       setOrders(nextOrders.orders);
@@ -109,9 +119,39 @@ function Dashboard({ onLogout }) {
   }, [onLogout]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => loadDashboard(search), 250);
+    const timer = window.setTimeout(() => loadDashboard(search, startDate, endDate), 250);
     return () => window.clearTimeout(timer);
-  }, [search, loadDashboard]);
+  }, [search, startDate, endDate, loadDashboard]);
+
+  async function updateOrderFulfillment(orderId, orderFulfillment) {
+    setBusyOrderId(orderId);
+    setError('');
+    try {
+      await apiRequest(`/api/admin/orders/${orderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ order_fulfillment: orderFulfillment })
+      });
+      await loadDashboard(search, startDate, endDate);
+    } catch (updateError) {
+      setError(updateError.message);
+    } finally {
+      setBusyOrderId(null);
+    }
+  }
+
+  async function deleteOrder(order) {
+    if (!window.confirm(`Delete the order for ${order.customer_name}? This cannot be undone.`)) return;
+    setBusyOrderId(order.id);
+    setError('');
+    try {
+      await apiRequest(`/api/admin/orders/${order.id}`, { method: 'DELETE' });
+      await loadDashboard(search, startDate, endDate);
+    } catch (deleteError) {
+      setError(deleteError.message);
+    } finally {
+      setBusyOrderId(null);
+    }
+  }
 
   async function logout() {
     try {
@@ -129,7 +169,7 @@ function Dashboard({ onLogout }) {
           <span>Home Bakers <small>Orders CRM</small></span>
         </a>
         <div className="topbar-actions">
-          <button className="quiet-button" onClick={() => loadDashboard(search)} type="button">Refresh</button>
+          <button className="quiet-button" onClick={() => loadDashboard(search, startDate, endDate)} type="button">Refresh</button>
           <button className="quiet-button" onClick={logout} type="button">Sign out</button>
         </div>
       </header>
@@ -147,7 +187,7 @@ function Dashboard({ onLogout }) {
 
       <section className="summary-grid" aria-label="Order totals">
         <SummaryCard label="Orders recorded" value={summary ? summary.order_count : '—'} detail="All-time orders" />
-        <SummaryCard label="Sales value" value={summary ? currency.format(summary.sales_total) : '—'} detail="Includes delivery fees" />
+        <SummaryCard label="Sales value" value={summary ? currency.format(summary.sales_total) : '—'} detail="Fulfilled orders, incl. delivery, in selected dates" />
         <SummaryCard label="Customers" value={summary ? summary.customer_count : '—'} detail="Unique phone numbers" />
       </section>
 
@@ -171,25 +211,33 @@ function Dashboard({ onLogout }) {
         <article className="panel orders-panel">
           <div className="panel-heading orders-heading">
             <div><p className="eyebrow">THE LATEST BATCH</p><h2>Recent orders</h2></div>
-            <label className="search-box">
-              <span aria-hidden="true">⌕</span>
-              <input
-                aria-label="Search customers by name or phone"
-                onChange={event => setSearch(event.target.value)}
-                placeholder="Search name or phone"
-                type="search"
-                value={search}
-              />
-            </label>
+            <div className="orders-controls">
+              <div className="date-filters" aria-label="Filter orders by date">
+                <label><span>From</span><input aria-label="From date" onChange={event => setStartDate(event.target.value)} type="date" value={startDate} /></label>
+                <label><span>To</span><input aria-label="To date" onChange={event => setEndDate(event.target.value)} type="date" value={endDate} /></label>
+              </div>
+              <label className="search-box">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  aria-label="Search customers by name or phone"
+                  onChange={event => setSearch(event.target.value)}
+                  placeholder="Search name or phone"
+                  type="search"
+                  value={search}
+                />
+              </label>
+            </div>
           </div>
           {loading && <p className="loading-state">Loading orders…</p>}
           {!loading && !error && orders.length === 0 && (
-            <p className="empty-state">{search ? 'No orders found for that search.' : 'No orders recorded yet.'}</p>
+            <p className="empty-state">
+              {search ? 'No orders found for that search.' : startDate || endDate ? 'No orders found in that date range.' : 'No orders recorded yet.'}
+            </p>
           )}
           {!loading && orders.length > 0 && (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Customer</th><th>Order</th><th>Fulfillment</th><th>Total</th><th>Placed</th></tr></thead>
+                <thead><tr><th>Customer</th><th>Order</th><th>Order type</th><th>Fulfilled</th><th>Total</th><th>Placed</th><th>Actions</th></tr></thead>
                 <tbody>{orders.map(order => (
                   <tr key={order.id}>
                     <td><strong>{order.customer_name}</strong><a href={`tel:${order.customer_phone}`}>{order.customer_phone}</a></td>
@@ -204,8 +252,21 @@ function Dashboard({ onLogout }) {
                         </span>
                       )}
                     </td>
+                    <td>
+                      <select
+                        aria-label={`Order fulfillment for ${order.customer_name}`}
+                        className={`order-fulfillment-select ${order.order_fulfillment === 'Yes' ? 'fulfilled' : 'unfulfilled'}`}
+                        disabled={busyOrderId === order.id}
+                        onChange={event => updateOrderFulfillment(order.id, event.target.value)}
+                        value={order.order_fulfillment}
+                      >
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                    </td>
                     <td><strong>{currency.format(order.total)}</strong><span className="secondary-detail">incl. ₹{order.delivery_fee} delivery</span></td>
                     <td>{dateTime.format(new Date(order.created_at))}</td>
+                    <td><button className="delete-button" disabled={busyOrderId === order.id} onClick={() => deleteOrder(order)} type="button">Delete</button></td>
                   </tr>
                 ))}</tbody>
               </table>

@@ -40,5 +40,7 @@ Public submissions are limited to the five products and current catalog prices, 
 
 - Customer name and phone number (customers are deduplicated by phone).
 - Order reference, pickup/delivery, address, PIN, map coordinates and driving distance when applicable.
+- Order fulfillment status (`Yes` or `No`), defaulting to `Yes`; this is separate from the pickup/delivery order type.
 - Cookie varieties and quantities, subtotal, delivery fee, total, and order timestamp.
-- Dashboard totals, top-selling cookies, recent orders, and customer name/phone search.
+- Dashboard totals, top-selling cookies, recent orders, customer name/phone search, and a date-range filter. Sales include only orders marked fulfilled (`Yes`) within the selected dates.
+- Admin order deletion and fulfillment-status updates from the dashboard.

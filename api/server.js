@@ -88,6 +88,46 @@ function parsePositiveLimit(value) {
   return Number.isInteger(number) ? Math.max(1, Math.min(number, 100)) : 50;
 }
 
+function parseDateRange(query) {
+  const { startDate, endDate } = query;
+  const validDate = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && value.slice(0, 4) !== '0000'
+    && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`))
+    && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+
+  if (startDate !== undefined && !validDate(startDate)) {
+    return { error: 'Start date must be a valid date in YYYY-MM-DD format.' };
+  }
+  if (endDate !== undefined && !validDate(endDate)) {
+    return { error: 'End date must be a valid date in YYYY-MM-DD format.' };
+  }
+  if (startDate && endDate && startDate > endDate) {
+    return { error: 'Start date must be on or before the end date.' };
+  }
+  return { value: { startDate, endDate } };
+}
+
+function appendDateConditions(dateRange, parameters, timestampColumn) {
+  const conditions = [];
+  if (dateRange.startDate) {
+    parameters.push(dateRange.startDate);
+    conditions.push(`${timestampColumn} >= ($${parameters.length}::date::timestamp AT TIME ZONE 'Asia/Kolkata')`);
+  }
+  if (dateRange.endDate) {
+    parameters.push(dateRange.endDate);
+    conditions.push(`${timestampColumn} < (($${parameters.length}::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata')`);
+  }
+  return conditions.length ? `AND ${conditions.join(' AND ')}` : '';
+}
+
+function isValidOrderId(value) {
+  return typeof value === 'string'
+    && value.length <= 19
+    && /^[1-9]\d*$/.test(value)
+    && BigInt(value) <= 9223372036854775807n;
+}
+
 export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins = [] }) {
   if (!pool) throw new Error('A PostgreSQL connection pool is required.');
   if (!adminPassword || adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters.');
@@ -230,13 +270,22 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
   });
 
   app.get('/api/admin/summary', requireAdmin, async (request, response) => {
+    const dateRange = parseDateRange(request.query);
+    if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+    const parameters = [];
+    const dateConditions = appendDateConditions(dateRange.value, parameters, 'o.created_at');
     try {
       const [totals, popularCookies] = await Promise.all([
         pool.query(
           `SELECT COUNT(*)::int AS order_count,
-                  COALESCE(SUM(total), 0)::int AS sales_total,
+                  COALESCE((
+                    SELECT SUM(o.total)::int
+                    FROM orders o
+                    WHERE o.order_fulfillment = 'Yes' ${dateConditions}
+                  ), 0)::int AS sales_total,
                   COUNT(DISTINCT customer_id)::int AS customer_count
-           FROM orders`
+           FROM orders`,
+          parameters
         ),
         pool.query(
           `SELECT cookie_name, SUM(quantity)::int AS quantity
@@ -254,13 +303,17 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
   });
 
   app.get('/api/admin/orders', requireAdmin, async (request, response) => {
+    const dateRange = parseDateRange(request.query);
+    if (dateRange.error) return response.status(400).json({ error: dateRange.error });
     const search = typeof request.query.search === 'string' ? request.query.search.trim().slice(0, 100) : '';
     const limit = parsePositiveLimit(request.query.limit);
     const parameters = [];
-    let searchClause = '';
+    const conditions = [];
+    const dateConditions = appendDateConditions(dateRange.value, parameters, 'o.created_at');
+    if (dateConditions) conditions.push(dateConditions.slice(4));
     if (search) {
       parameters.push(`%${search}%`);
-      searchClause = 'WHERE c.name ILIKE $1 OR c.phone ILIKE $1';
+      conditions.push(`(c.name ILIKE $${parameters.length} OR c.phone ILIKE $${parameters.length})`);
     }
     parameters.push(limit);
     try {
@@ -269,6 +322,7 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
                 o.delivery_latitude, o.delivery_longitude, o.distance_km,
                 o.items_subtotal, o.delivery_fee, o.total, o.status, o.created_at,
                 c.name AS customer_name, c.phone AS customer_phone,
+                o.order_fulfillment,
                 COALESCE(
                   JSON_AGG(
                     JSON_BUILD_OBJECT(
@@ -283,7 +337,7 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
          FROM orders o
          JOIN customers c ON c.id = o.customer_id
          LEFT JOIN order_items oi ON oi.order_id = o.id
-         ${searchClause}
+         ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
          GROUP BY o.id, c.name, c.phone
          ORDER BY o.created_at DESC, o.id DESC
          LIMIT $${parameters.length}`,
@@ -293,6 +347,39 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
     } catch (error) {
       console.error('Could not load CRM orders:', error);
       response.status(500).json({ error: 'Could not load orders.' });
+    }
+  });
+
+  app.patch('/api/admin/orders/:id', ensureSameOrigin, requireAdmin, async (request, response) => {
+    const { id } = request.params;
+    if (!isValidOrderId(id)) return response.status(400).json({ error: 'Order ID is invalid.' });
+    const { order_fulfillment: orderFulfillment } = request.body || {};
+    if (!['Yes', 'No'].includes(orderFulfillment)) {
+      return response.status(400).json({ error: 'Fulfillment must be Yes or No.' });
+    }
+    try {
+      const result = await pool.query(
+        'UPDATE orders SET order_fulfillment = $1 WHERE id = $2 RETURNING id, order_fulfillment',
+        [orderFulfillment, id]
+      );
+      if (!result.rowCount) return response.status(404).json({ error: 'Order not found.' });
+      return response.json({ order: result.rows[0] });
+    } catch (error) {
+      console.error('Could not update CRM order fulfillment:', error);
+      return response.status(500).json({ error: 'Could not update order fulfillment.' });
+    }
+  });
+
+  app.delete('/api/admin/orders/:id', ensureSameOrigin, requireAdmin, async (request, response) => {
+    const { id } = request.params;
+    if (!isValidOrderId(id)) return response.status(400).json({ error: 'Order ID is invalid.' });
+    try {
+      const result = await pool.query('DELETE FROM orders WHERE id = $1 RETURNING id', [id]);
+      if (!result.rowCount) return response.status(404).json({ error: 'Order not found.' });
+      return response.json({ deleted: true, orderId: result.rows[0].id });
+    } catch (error) {
+      console.error('Could not delete CRM order:', error);
+      return response.status(500).json({ error: 'Could not delete order.' });
     }
   });
 
