@@ -17,3 +17,11 @@ services:
         generateValue: true
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: butterbitebakers
+      - key: FIREBASE_WEB_API_KEY
+        sync: false
+      - key: MAILERSEND_API_TOKEN
+        sync: false
+      - key: MAILERSEND_FROM_EMAIL
+        value: orders@test-yxj6lj9mmoq4do2r.mlsender.net

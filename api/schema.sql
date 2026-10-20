@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS inventory_purchases (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS order_email_notifications (
+    order_ref UUID PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    message_id TEXT,
+    last_error TEXT,
+    lock_expires_at TIMESTAMPTZ,
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS orders_customer_id_idx ON orders (customer_id);
 CREATE INDEX IF NOT EXISTS order_items_cookie_name_idx ON order_items (cookie_name);

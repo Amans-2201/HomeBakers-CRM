@@ -5,6 +5,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import pg from 'pg';
+import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { createOrderNotificationHandler } from './order-notifications.js';
+import { getFirestoreOrder } from './firebase-firestore.js';
+import { buildOrderEmail } from './order-email.js';
 import { validateManualOrderPayload, validateOrderPayload } from './orders.js';
 import { createSessionToken, passwordMatches, verifySessionToken } from './security.js';
 
@@ -69,7 +74,7 @@ function createOriginMiddleware(allowedOrigins) {
     }
     if (request.method === 'OPTIONS') {
       response.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      response.set('Access-Control-Allow-Headers', 'Content-Type');
+      response.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
       return response.sendStatus(204);
     }
     return next();
@@ -153,7 +158,15 @@ function analyticsGranularity(dateRange) {
   return days <= 90 ? 'day' : 'month';
 }
 
-export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins = [] }) {
+export function createApp({
+  pool,
+  adminPassword,
+  sessionSecret,
+  allowedOrigins = [],
+  verifyFirebaseIdToken,
+  getFirebaseOrder,
+  sendBakerOrderEmail
+}) {
   if (!pool) throw new Error('A PostgreSQL connection pool is required.');
   if (!adminPassword || adminPassword.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters.');
   if (!sessionSecret || sessionSecret.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters.');
@@ -252,6 +265,36 @@ export function createApp({ pool, adminPassword, sessionSecret, allowedOrigins =
       connection?.release();
     }
   });
+
+  app.post(
+    '/api/order-notifications',
+    createRateLimiter({ limit: 30, windowMs: 60 * 60 * 1000 }),
+    async (request, response, next) => {
+      if (!verifyFirebaseIdToken || !getFirebaseOrder || !sendBakerOrderEmail) {
+        return response.status(503).json({ error: 'Order email notifications are not configured.' });
+      }
+
+      const authorization = request.get('Authorization') || '';
+      const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+      if (!tokenMatch) return response.status(401).json({ error: 'Sign in before requesting an order notification.' });
+
+      try {
+        request.firebaseUser = await verifyFirebaseIdToken(tokenMatch[1]);
+        request.firebaseToken = tokenMatch[1];
+        next();
+      } catch {
+        return response.status(401).json({ error: 'Your sign-in has expired. Sign in again and retry.' });
+      }
+    },
+    (request, response, next) => {
+      if (!request.firebaseUser) return next();
+      return createOrderNotificationHandler({
+        pool,
+        getOrder: (orderId, token) => getFirebaseOrder(orderId, token),
+        sendEmail: (order, orderId, recipient) => sendBakerOrderEmail(order, orderId, recipient)
+      })(request, response).catch(next);
+    }
+  );
 
   const loginLimiter = createRateLimiter({ limit: 8, windowMs: 15 * 60 * 1000 });
   app.post('/api/admin/login', ensureSameOrigin, loginLimiter, (request, response) => {
@@ -674,7 +717,56 @@ async function start() {
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
-  const app = createApp({ pool, adminPassword: ADMIN_PASSWORD, sessionSecret: SESSION_SECRET, allowedOrigins });
+  const firebaseProjectId = process.env.FIREBASE_PROJECT_ID || 'butterbitebakers';
+  const firebaseAuthApp = initializeApp({ projectId: firebaseProjectId });
+  const firebaseAuth = getAuth(firebaseAuthApp);
+  const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY;
+  const mailerSendToken = process.env.MAILERSEND_API_TOKEN;
+  const mailerSendFromEmail = process.env.MAILERSEND_FROM_EMAIL;
+  const sendBakerOrderEmail = async (order, orderId, recipient) => {
+    if (!mailerSendToken || !mailerSendFromEmail) {
+      throw new Error('MailerSend API token and sender address must be configured.');
+    }
+    const { subject, text, html } = buildOrderEmail(order, orderId);
+    const result = await fetch('https://api.mailersend.com/v1/email', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${mailerSendToken}`,
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        from: { email: mailerSendFromEmail, name: 'Butter Bite Bakers Orders' },
+        to: [{ email: recipient, name: 'Butter Bite Bakers' }],
+        subject,
+        text,
+        html
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!result.ok) {
+      const responseDetails = (await result.text()).slice(0, 1000);
+      throw new Error(`MailerSend returned HTTP ${result.status}: ${responseDetails}`);
+    }
+    return result.headers.get('x-message-id');
+  };
+  const app = createApp({
+    pool,
+    adminPassword: ADMIN_PASSWORD,
+    sessionSecret: SESSION_SECRET,
+    allowedOrigins,
+    verifyFirebaseIdToken: token => firebaseAuth.verifyIdToken(token),
+    getFirebaseOrder: (orderId, idToken) => {
+      if (!firebaseApiKey) throw new Error('FIREBASE_WEB_API_KEY is not configured.');
+      return getFirestoreOrder({
+        orderId,
+        idToken,
+        apiKey: firebaseApiKey,
+        projectId: firebaseProjectId
+      });
+    },
+    sendBakerOrderEmail
+  });
   const port = Number.parseInt(process.env.PORT || '3000', 10);
   const server = createServer(app);
   server.listen(port, '0.0.0.0', () => console.log(`Home Bakers Orders CRM listening on ${port}`));

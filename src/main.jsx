@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { COOKIE_CATALOG } from '../api/orders.js';
+import FirebaseCRMApp from './firebase-crm.jsx';
 import './style.css';
 
 const currency = new Intl.NumberFormat('en-IN', {
@@ -714,4 +715,7 @@ function App() {
     : <Login onLogin={() => setAuthenticated(true)} />;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+const isFirebaseCRM = window.location.hostname === 'butterbitebakers-crm.web.app'
+  || new URLSearchParams(window.location.search).has('firebaseCRM');
+
+createRoot(document.getElementById('root')).render(isFirebaseCRM ? <FirebaseCRMApp /> : <App />);

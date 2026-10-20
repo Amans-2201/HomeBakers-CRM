@@ -1,0 +1,15 @@
+{
+  "hosting": {
+    "site": "butterbitebakers-crm",
+    "public": "dist",
+    "ignore": ["firebase.json", ".*", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "/index.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, max-age=0, must-revalidate" }
+        ]
+      }
+    ]
+  }
+}
