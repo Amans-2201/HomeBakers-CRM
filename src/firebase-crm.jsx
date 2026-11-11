@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { COOKIE_CATALOG, COOKIE_PACK_SIZES } from '../api/orders.js';
+import { getStorefrontOrderMetrics } from './analytics.js';
 
 const statusLabels = {
   pending: 'Order placed',
@@ -354,7 +355,16 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
     : activePage === 'realtime'
       ? 'Realtime activity'
       : 'Website analytics';
-  const dailyRows = data?.daily || [];
+  const selectedRange = activePage === 'realtime' ? '1' : range.slice(0, -1);
+  const orderMetrics = getStorefrontOrderMetrics(orders, selectedRange);
+  const dailyRows = (data?.daily || []).map(row => ({
+    ...row,
+    conversions: orderMetrics.dailyCounts[row.date] || 0
+  }));
+  const recentEvents = [
+    ...(data?.recentEvents || []).filter(event => event.event_type !== 'order_placed'),
+    ...orderMetrics.recentEvents
+  ].sort((first, second) => Date.parse(second.created_at) - Date.parse(first.created_at)).slice(0, 25);
   const maxVisits = Math.max(1, ...dailyRows.map(row => Number(row.visits) || 0));
   const orderCount = orders.length;
   const pendingCount = orders.filter(order => order.status === 'pending').length;
@@ -374,7 +384,7 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
         <div>
           <p className="eyebrow">{activePage === 'realtime' ? 'LIVE STOREFRONT ACTIVITY' : 'BUTTER BITE BAKERS · INSIGHTS'}</p>
           <h1>{pageTitle}</h1>
-          <p className="muted">Website visits and checkout conversions, stored in PostgreSQL. Signed in as {user.email}.</p>
+          <p className="muted">Visits and unique browsers are stored in PostgreSQL; current storefront orders are counted from Firestore. Signed in as {user.email}.</p>
         </div>
         <span className="live-indicator"><span />{activePage === 'realtime' ? 'Today · updates every 30 seconds' : 'Live storefront data'}</span>
       </section>
@@ -408,8 +418,8 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
           <section aria-label="Website analytics totals" className="summary-grid crm-site-summary">
             <article className="summary-card"><p>Site visits</p><strong>{loading ? '—' : Number(data?.visits || 0).toLocaleString('en-IN')}</strong><span>Storefront page views</span></article>
             <article className="summary-card"><p>Unique visitors</p><strong>{loading ? '—' : Number(data?.uniqueVisitors || 0).toLocaleString('en-IN')}</strong><span>Approx. unique browsers</span></article>
-            <article className="summary-card"><p>Conversions</p><strong>{loading ? '—' : Number(data?.conversions || 0).toLocaleString('en-IN')}</strong><span>Storefront orders placed</span></article>
-            <article className="summary-card"><p>Conversion rate</p><strong>{loading ? '—' : `${Number(data?.conversionRate || 0).toLocaleString('en-IN')}%`}</strong><span>Orders per unique visitor</span></article>
+            <article className="summary-card"><p>Conversions</p><strong>{loading || ordersLoading ? '—' : orderMetrics.conversions.toLocaleString('en-IN')}</strong><span>Current storefront orders in Firestore</span></article>
+            <article className="summary-card"><p>Conversion rate</p><strong>{loading || ordersLoading ? '—' : `${(data?.uniqueVisitors ? orderMetrics.conversions / data.uniqueVisitors * 100 : 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })}%`}</strong><span>Current orders per unique visitor</span></article>
           </section>
           <section className="panel crm-analytics-panel">
             <div className="panel-heading">
@@ -447,9 +457,9 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
             <span className="live-indicator"><span />{activePage === 'realtime' ? 'Today' : range}</span>
           </div>
           {loading && <p className="loading-state">Loading activity…</p>}
-          {!loading && !error && !data?.recentEvents?.length && <p className="empty-state">No activity recorded for this period yet. Visits and orders will appear here as they happen.</p>}
+          {!loading && !error && !recentEvents.length && <p className="empty-state">No activity recorded for this period yet. Visits and orders will appear here as they happen.</p>}
           <ol className="crm-activity-list">
-            {(data?.recentEvents || []).map((event, index) => (
+            {recentEvents.map((event, index) => (
               <li key={`${event.created_at}-${index}`}>
                 <span aria-hidden="true" className={`crm-activity-icon ${event.event_type === 'order_placed' ? 'is-conversion' : ''}`}>
                   {event.event_type === 'order_placed' ? '✓' : '↗'}
