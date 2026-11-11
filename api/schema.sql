@@ -65,7 +65,22 @@ CREATE TABLE IF NOT EXISTS order_email_notifications (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS site_analytics_events (
+    event_id UUID PRIMARY KEY,
+    visitor_id UUID NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('page_view', 'order_placed')),
+    page_path TEXT NOT NULL DEFAULT '/',
+    conversion_ref UUID UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT site_analytics_conversion_ref_check CHECK (
+        (event_type = 'order_placed' AND conversion_ref IS NOT NULL)
+        OR (event_type = 'page_view' AND conversion_ref IS NULL)
+    )
+);
+
 CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS orders_customer_id_idx ON orders (customer_id);
 CREATE INDEX IF NOT EXISTS order_items_cookie_name_idx ON order_items (cookie_name);
 CREATE INDEX IF NOT EXISTS inventory_purchases_purchased_on_idx ON inventory_purchases (purchased_on DESC);
+CREATE INDEX IF NOT EXISTS site_analytics_events_created_at_idx ON site_analytics_events (created_at DESC);
+CREATE INDEX IF NOT EXISTS site_analytics_events_visitor_created_at_idx ON site_analytics_events (visitor_id, created_at DESC);

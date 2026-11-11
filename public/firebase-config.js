@@ -8,3 +8,5 @@ window.BAKERY_FIREBASE_CONFIG = {
 };
 window.BAKERY_ADMIN_EMAIL = 'amans66@gmail.com';
 window.BAKERY_ORDER_NOTIFICATION_URL = 'https://home-bakers-orders-crm.onrender.com/api/order-notifications';
+window.BAKERY_SITE_ANALYTICS_URL = 'https://home-bakers-orders-crm.onrender.com/api/analytics/events';
+window.BAKERY_SITE_ANALYTICS_DASHBOARD_URL = 'https://home-bakers-orders-crm.onrender.com/api/admin/site-analytics';

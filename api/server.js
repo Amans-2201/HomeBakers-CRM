@@ -18,6 +18,7 @@ const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const staticDirectory = path.resolve(appDirectory, '../dist');
 const sessionCookieName = 'hb_admin_session';
 const sessionDurationMs = 8 * 60 * 60 * 1000;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function createRateLimiter({ limit, windowMs }) {
   const requests = new Map();
@@ -163,6 +164,7 @@ export function createApp({
   adminPassword,
   sessionSecret,
   allowedOrigins = [],
+  bakerEmail = 'amans66@gmail.com',
   verifyFirebaseIdToken,
   getFirebaseOrder,
   sendBakerOrderEmail
@@ -194,6 +196,131 @@ export function createApp({
       request.log?.error?.(error);
       console.error('CRM database health check failed:', error);
       response.status(503).json({ status: 'unavailable' });
+    }
+  });
+
+  app.post(
+    '/api/analytics/events',
+    createRateLimiter({ limit: 120, windowMs: 15 * 60 * 1000 }),
+    async (request, response) => {
+      const { eventId, visitorId, eventType, conversionRef, pagePath } = request.body || {};
+      if (!uuidPattern.test(eventId || '') || !uuidPattern.test(visitorId || '')) {
+        return response.status(400).json({ error: 'Valid event and anonymous visitor IDs are required.' });
+      }
+      if (!['page_view', 'order_placed'].includes(eventType)) {
+        return response.status(400).json({ error: 'Unsupported analytics event.' });
+      }
+      if (eventType === 'order_placed' && !uuidPattern.test(conversionRef || '')) {
+        return response.status(400).json({ error: 'A valid order reference is required for a conversion.' });
+      }
+      if (eventType === 'page_view' && conversionRef != null) {
+        return response.status(400).json({ error: 'Page views cannot include an order reference.' });
+      }
+      const safePagePath = typeof pagePath === 'string'
+        && pagePath.length <= 120
+        && /^\/[a-zA-Z0-9/_-]*$/.test(pagePath)
+        ? pagePath
+        : null;
+      if (!safePagePath) {
+        return response.status(400).json({ error: 'A valid page path is required.' });
+      }
+
+      try {
+        await pool.query(
+          `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT DO NOTHING`,
+          [eventId, visitorId, eventType, safePagePath, eventType === 'order_placed' ? conversionRef : null]
+        );
+        return response.status(202).json({ accepted: true });
+      } catch (error) {
+        console.error('Could not record storefront analytics event:', error);
+        return response.status(500).json({ error: 'The analytics event could not be recorded.' });
+      }
+    }
+  );
+
+  const requireFirebaseBaker = async (request, response, next) => {
+    response.set('Cache-Control', 'no-store');
+    if (!verifyFirebaseIdToken) {
+      return response.status(503).json({ error: 'Firebase authentication is not configured.' });
+    }
+    const authorization = request.get('Authorization') || '';
+    const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!tokenMatch) return response.status(401).json({ error: 'Sign in as the baker to view analytics.' });
+    try {
+      request.firebaseUser = await verifyFirebaseIdToken(tokenMatch[1]);
+    } catch {
+      return response.status(401).json({ error: 'Your sign-in has expired. Sign in again and retry.' });
+    }
+    if (request.firebaseUser.email?.toLowerCase() !== bakerEmail.toLowerCase()) {
+      return response.status(403).json({ error: 'You are not authorized to view site analytics.' });
+    }
+    return next();
+  };
+
+  app.get('/api/admin/site-analytics', requireFirebaseBaker, async (request, response) => {
+    const requestedRange = request.query.range === undefined ? '30d' : request.query.range;
+    const rangeMatch = typeof requestedRange === 'string' && requestedRange.match(/^(\d{1,3})d$/);
+    if (!rangeMatch) {
+      return response.status(400).json({ error: 'Choose a supported analytics period: 1d, 7d, 30d, or 90d.' });
+    }
+    const rangeDays = Number(rangeMatch[1]);
+    if (![1, 7, 30, 90].includes(rangeDays)) {
+      return response.status(400).json({ error: 'Choose a supported analytics period: 1d, 7d, 30d, or 90d.' });
+    }
+
+    try {
+      const [totals, daily, recentEvents] = await Promise.all([
+        pool.query(
+          `SELECT COUNT(*) FILTER (WHERE event_type = 'page_view')::int AS visits,
+                  COUNT(DISTINCT visitor_id) FILTER (WHERE event_type = 'page_view')::int AS unique_visitors,
+                  COUNT(DISTINCT conversion_ref)::int AS conversions
+           FROM site_analytics_events
+          WHERE created_at >= (((NOW() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1))::timestamp AT TIME ZONE 'Asia/Kolkata')`,
+          [rangeDays]
+        ),
+        pool.query(
+          `WITH days AS (
+             SELECT generate_series(
+               (NOW() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1),
+               (NOW() AT TIME ZONE 'Asia/Kolkata')::date,
+               INTERVAL '1 day'
+             )::date AS day
+           )
+           SELECT days.day::text AS date,
+                  COUNT(events.event_id) FILTER (WHERE events.event_type = 'page_view')::int AS visits,
+                  COUNT(DISTINCT events.visitor_id) FILTER (WHERE events.event_type = 'page_view')::int AS "uniqueVisitors",
+                  COUNT(DISTINCT events.conversion_ref)::int AS conversions
+           FROM days
+           LEFT JOIN site_analytics_events AS events
+             ON events.created_at >= (days.day::timestamp AT TIME ZONE 'Asia/Kolkata')
+             AND events.created_at < ((days.day + 1)::timestamp AT TIME ZONE 'Asia/Kolkata')
+           GROUP BY days.day
+           ORDER BY days.day`,
+          [rangeDays]
+        ),
+        pool.query(
+          `SELECT event_type, page_path, created_at
+           FROM site_analytics_events
+          WHERE created_at >= (((NOW() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1))::timestamp AT TIME ZONE 'Asia/Kolkata')
+           ORDER BY created_at DESC
+           LIMIT 25`,
+          [rangeDays]
+        )
+      ]);
+      const { visits, unique_visitors: uniqueVisitors, conversions } = totals.rows[0];
+      return response.json({
+        visits: Number(visits),
+        uniqueVisitors: Number(uniqueVisitors),
+        conversions: Number(conversions),
+        conversionRate: uniqueVisitors ? Number((conversions / uniqueVisitors * 100).toFixed(1)) : 0,
+        daily: daily.rows,
+        recentEvents: recentEvents.rows
+      });
+    } catch (error) {
+      console.error('Could not load storefront analytics:', error);
+      return response.status(500).json({ error: 'Could not load storefront analytics.' });
     }
   });
 

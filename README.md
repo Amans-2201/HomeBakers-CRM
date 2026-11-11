@@ -2,7 +2,9 @@
 
 A small React dashboard and Express API that stores customers and orders in PostgreSQL. It is designed for a Render Free web service with a free Neon Postgres database. The dashboard is password-protected; public order submission accepts only the known cookie catalog and server-calculates prices and totals.
 
-The Firebase Hosting deployment at `https://butterbitebakers-crm.web.app` provides a separate live view of storefront orders in the `butterbitebakers` Firestore database. It uses the same Firebase baker account as the storefront and listens to the `orders` collection in real time. Status changes made in either dashboard are shared with customers. Bakers can also add phone, WhatsApp, in-person, or other orders directly to the shared collection. The existing PostgreSQL-backed CRM remains available on its configured server deployment; PostgreSQL inventory and historical CRM records are not copied into Firestore.
+The Firebase Hosting deployment at `https://butterbitebakers-crm.web.app` provides a separate live view of storefront orders in the `butterbitebakers` Firestore database. It uses the same Firebase baker account as the storefront and listens to the `orders` collection in real time. Status changes made in either dashboard are shared with customers. Customer payment reports appear as live CRM notifications and on their order cards; the baker can confirm receipt from either dashboard, which notifies the customer. The **Invoices** tab tracks orders after delivery or pickup and opens the generic invoice in the browser print dialog for saving as PDF. Bakers can also add phone, WhatsApp, in-person, or other orders directly to the shared collection. The existing PostgreSQL-backed CRM remains available on its configured server deployment; PostgreSQL inventory and historical CRM records are not copied into Firestore.
+
+The Firebase CRM now has a left navigation for **Dashboard**, **Realtime**, **Analytics**, **Customers**, **Orders**, and **Invoices**. Storefront page views and successfully placed storefront orders are recorded in PostgreSQL by the Render API. Analytics reports show visits, approximate unique browsers, conversions, conversion rate, and daily trends for 7, 30, or 90 days; the Realtime feed refreshes every 30 seconds. Only the authorized Firebase baker account can read reports. Event rows contain an anonymous browser UUID, event/order UUID, page path, and server timestamp—no IP address or customer contact details. Counts begin when the updated storefront and API are deployed; earlier activity is not backfilled.
 
 ## Local development
 
@@ -21,6 +23,8 @@ The Firebase Hosting deployment at `https://butterbitebakers-crm.web.app` provid
 
 The API creates its tables on startup using `api/schema.sql`.
 
+To enable storefront analytics in production, deploy the updated Render API so it applies the `site_analytics_events` schema, then deploy the updated Firebase CRM and storefront. `ALLOWED_ORIGINS` must include both Firebase Hosting origins documented below. The storefront analytics endpoint URL is configured in `Web-App/firebase-config.js`; the CRM report endpoint is configured in `orders_crm/public/firebase-config.js`.
+
 ## Deploy the live Firebase orders CRM
 
 The Firebase CRM is a static React app hosted separately from the cookie storefront but uses the same Firebase project and Firestore collection.
@@ -28,9 +32,9 @@ The Firebase CRM is a static React app hosted separately from the cookie storefr
 1. In Firebase Authentication, enable **Email/Password** and add `butterbitebakers-crm.web.app` to Authorized domains if it is not already listed.
 2. From this directory, run `npm run build`.
 3. Deploy with `firebase deploy --only hosting --project butterbitebakers`.
-4. Ensure the storefront Firestore rules have been deployed from `Web-App` with the baker-only manual-order creation permission, then sign in at `https://butterbitebakers-crm.web.app` with the authorized baker account (`amans66@gmail.com`). The same Firestore order records, timestamps, and status controls are shared with the storefront and customer tracking page.
+4. Deploy the latest Firestore rules from `Web-App` so the authorized baker can manage customer profiles as well as manual orders, then sign in at `https://butterbitebakers-crm.web.app` with the authorized baker account (`amans66@gmail.com`). The **Customers** page reads and updates `customerProfiles`; deleting a customer removes the profile and orders linked by that profile's Firebase UID. Invoices are generated from those order records, so deleting an order also removes its invoice from the register. The customer's Firebase sign-in account and orders without that UID are not deleted.
 
-Use **Add order** in the live orders CRM for orders received by phone, WhatsApp, in person, or another source. The form captures the customer contact, pickup/delivery details, PIN, optional map coordinates, catalog items and quantities, and order notes. Prices and totals are calculated from the storefront catalog. Delivery fees, distance limits, and minimums follow the storefront rules. New orders start as pending and are timestamped in the shared Firestore collection.
+Use **Add order** in the live orders CRM for orders received by phone, WhatsApp, in person, or another source. The form captures the customer contact, pickup/delivery details, PIN, optional map coordinates, catalog items and quantities, and order notes. Prices and totals are calculated from the storefront catalog. Delivery fees and the 10 km distance limit follow the storefront rules; there is no cookie subtotal minimum. New orders start as pending and are timestamped in the shared Firestore collection.
 
 ## Monthly database snapshots
 
@@ -68,7 +72,7 @@ The notification endpoint is configured as the public `BAKERY_ORDER_NOTIFICATION
 
 In `index.htm`, set `CRM_ORDER_ENDPOINT` to the deployed service's `https://<service>.onrender.com/api/orders` URL. The storefront sends a second, fire-and-forget request after checkout validation and still opens WhatsApp if the CRM is unavailable. Do not place the admin password or `SESSION_SECRET` in the storefront.
 
-Public submissions are limited to the five products and current catalog prices, checked against delivery range and minimums, rate-limited, and restricted by the configured storefront origin. Admin routes require the HttpOnly signed session cookie.
+Public submissions are limited to the five products and current catalog prices, checked against the 10 km delivery range, rate-limited, and restricted by the configured storefront origin. There is no cookie subtotal minimum. Admin routes require the HttpOnly signed session cookie.
 
 ## Data captured
 

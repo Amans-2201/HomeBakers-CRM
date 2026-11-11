@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateManualOrderPayload, validateOrderPayload } from './orders.js';
+import { COOKIE_CATALOG, validateManualOrderPayload, validateOrderPayload } from './orders.js';
 import { createSessionToken, passwordMatches, verifySessionToken } from './security.js';
 import { createApp } from './server.js';
 
@@ -21,31 +21,66 @@ const basePayload = {
   items: [{ name: 'Vanilla Butter Cookies', quantity: 3, unitPrice: 1 }]
 };
 
-test('validates the trusted cookie prices and computes order totals', () => {
-  const result = validateOrderPayload(basePayload);
-  assert.equal(result.value.order.subtotal, 660);
-  assert.equal(result.value.order.deliveryFee, 200);
-  assert.equal(result.value.order.total, 860);
-  assert.equal(result.value.items[0].unitPrice, 220);
+test('uses the storefront cookie catalog and trusted prices', () => {
+  assert.deepEqual(COOKIE_CATALOG, {
+    'Twin Cookie': 250,
+    'Mini Raisin Cookie': 250,
+    Nankhatai: 250,
+    'Coconut Cookies': 220,
+    'Choco Chip Cookies': 230,
+    'Almond Cashew Cookies': 250,
+    'Vanilla Butter Cookies': 200,
+    'Sweet and Salty Zeera Cookies': 200
+  });
+  const items = Object.entries(COOKIE_CATALOG).map(([name]) => ({ name, quantity: 1 }));
+  const result = validateOrderPayload({
+    ...basePayload,
+    order: { ...basePayload.order, fulfillment: 'pickup', address: '', pincode: '' },
+    items
+  });
+  assert.equal(result.value.order.subtotal, 1850);
+  assert.equal(result.value.items.length, 8);
 });
 
-test('enforces the delivery minimum for routes over seven kilometres', () => {
+test('validates the trusted cookie prices and computes order totals', () => {
+  const result = validateOrderPayload(basePayload);
+  assert.equal(result.value.order.subtotal, 600);
+  assert.equal(result.value.order.deliveryFee, 200);
+  assert.equal(result.value.order.total, 800);
+  assert.equal(result.value.items[0].unitPrice, 200);
+});
+
+test('allows an order below the former minimum beyond five kilometres', () => {
+  const result = validateOrderPayload({
+    ...basePayload,
+    order: { ...basePayload.order, distanceKm: 5.1 },
+    items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
+  });
+  assert.equal(result.value.order.subtotal, 200);
+  assert.equal(result.value.order.deliveryFee, 200);
+  assert.equal(result.value.order.total, 400);
+});
+
+test('allows an order below the former minimum beyond seven kilometres', () => {
   const result = validateOrderPayload({
     ...basePayload,
     order: { ...basePayload.order, distanceKm: 7.1 },
-    items: [{ name: 'Vanilla Butter Cookies', quantity: 2 }]
+    items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
   });
-  assert.match(result.error, /minimum/i);
+  assert.equal(result.value.order.subtotal, 200);
+  assert.equal(result.value.order.deliveryFee, 200);
+  assert.equal(result.value.order.total, 400);
 });
 
-test('uses the lower minimum through seven kilometres and accepts exactly seven', () => {
+test('allows an order below the former minimum at exactly seven kilometres', () => {
   const result = validateOrderPayload({
     ...basePayload,
     order: { ...basePayload.order, distanceKm: 7 },
-    items: [{ name: 'Vanilla Butter Cookies', quantity: 3 }]
+    items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
   });
-  assert.equal(result.value.order.subtotal, 660);
+  assert.equal(result.value.order.subtotal, 200);
   assert.equal(result.value.order.deliveryFee, 200);
+  assert.equal(result.value.order.total, 400);
 });
 
 test('rejects delivery routes beyond ten kilometres', () => {
@@ -56,19 +91,14 @@ test('rejects delivery routes beyond ten kilometres', () => {
   assert.match(result.error, /within 10 km/i);
 });
 
-test('accepts delivery at the ten kilometre limit when the minimum is met', () => {
+test('accepts a low-value delivery at the ten kilometre limit', () => {
   const result = validateOrderPayload({
     ...basePayload,
     order: { ...basePayload.order, distanceKm: 10 },
-    items: [
-      { name: 'Vanilla Butter Cookies', quantity: 1 },
-      { name: 'Choco Chip Cookies', quantity: 1 },
-      { name: 'Almond Cashew Cookies', quantity: 1 },
-      { name: 'Coconut Cookies', quantity: 1 }
-    ]
+    items: [{ name: 'Vanilla Butter Cookies', quantity: 1 }]
   });
-  assert.equal(result.value.order.subtotal, 1000);
-  assert.equal(result.value.order.total, 1200);
+  assert.equal(result.value.order.subtotal, 200);
+  assert.equal(result.value.order.total, 400);
 });
 
 test('allows pickup without delivery coordinates and charges no delivery fee', () => {
@@ -77,7 +107,7 @@ test('allows pickup without delivery coordinates and charges no delivery fee', (
     order: { fulfillment: 'pickup', address: '', pincode: '' }
   });
   assert.equal(result.value.order.deliveryFee, 0);
-  assert.equal(result.value.order.total, 660);
+  assert.equal(result.value.order.total, 600);
 });
 
 test('rejects tampered products and invalid quantities', () => {
@@ -104,13 +134,13 @@ test('validates manual call orders and calculates trusted catalog totals', () =>
     ]
   });
   assert.deepEqual(result.value.customer, { name: 'Call customer', phone: '+91 98765 43210' });
-  assert.equal(result.value.order.subtotal, 700);
-  assert.equal(result.value.order.total, 775);
+  assert.equal(result.value.order.subtotal, 630);
+  assert.equal(result.value.order.total, 705);
   assert.deepEqual(result.value.items[0], {
     name: 'Vanilla Butter Cookies',
-    unitPrice: 220,
+    unitPrice: 200,
     quantity: 2,
-    lineTotal: 440
+    lineTotal: 400
   });
 });
 
@@ -347,10 +377,10 @@ test('requires a valid admin session to read dashboard data', async () => {
     assert.equal(manualOrder.status, 201);
     assert.deepEqual(await manualOrder.json(), { saved: true, orderId: '42' });
     const manualOrderInsert = statements.find(statement => statement.sql.includes('INSERT INTO orders'));
-    assert.equal(manualOrderInsert.parameters[5], 440);
-    assert.equal(manualOrderInsert.parameters[7], 440);
+    assert.equal(manualOrderInsert.parameters[5], 400);
+    assert.equal(manualOrderInsert.parameters[7], 400);
     const itemInsert = statements.find(statement => statement.sql.includes('INSERT INTO order_items'));
-    assert.deepEqual(itemInsert.parameters.slice(1), ['Vanilla Butter Cookies', 220, 2, 440]);
+    assert.deepEqual(itemInsert.parameters.slice(1), ['Vanilla Butter Cookies', 200, 2, 400]);
 
     const filteredInventory = await fetch(
       `${baseUrl}/api/admin/inventory?startDate=2026-10-01&endDate=2026-10-14`,
@@ -390,6 +420,122 @@ test('requires a valid admin session to read dashboard data', async () => {
     });
     assert.equal(deletedPurchase.status, 200);
     assert.deepEqual(await deletedPurchase.json(), { deleted: true, purchaseId: '8' });
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('records anonymous storefront analytics and exposes reports only to the baker', async () => {
+  const statements = [];
+  const pool = {
+    async query(sql, parameters = []) {
+      statements.push({ sql, parameters });
+      if (sql.includes('COUNT(*) FILTER')) {
+        return { rows: [{ visits: 40, unique_visitors: 20, conversions: 4 }] };
+      }
+      if (sql.includes('WITH days AS')) {
+        return { rows: [{ date: '2026-11-11', visits: 5, uniqueVisitors: 4, conversions: 1 }] };
+      }
+      if (sql.includes('SELECT event_type, page_path')) {
+        return { rows: [{ event_type: 'page_view', page_path: '/', created_at: '2026-11-11T10:00:00.000Z' }] };
+      }
+      return { rows: [] };
+    }
+  };
+  const server = createApp({
+    pool,
+    adminPassword: 'a-private-password',
+    sessionSecret: 'a-long-test-session-secret-at-least-32-chars',
+    allowedOrigins: ['https://butterbitebakers.web.app'],
+    verifyFirebaseIdToken: async token => ({
+      email: token === 'baker-token' ? 'amans66@gmail.com' : 'customer@example.com'
+    })
+  }).listen(0);
+  await new Promise(resolve => server.once('listening', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const pageView = await fetch(`${baseUrl}/api/analytics/events`, {
+      method: 'POST',
+      headers: {
+        Origin: 'https://butterbitebakers.web.app',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1d',
+        visitorId: 'f46a3927-0639-4165-99d8-a02a9d26095d',
+        eventType: 'page_view',
+        pagePath: '/'
+      })
+    });
+    assert.equal(pageView.status, 202);
+    assert.deepEqual(await pageView.json(), { accepted: true });
+
+    const conversion = await fetch(`${baseUrl}/api/analytics/events`, {
+      method: 'POST',
+      headers: {
+        Origin: 'https://butterbitebakers.web.app',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1e',
+        visitorId: 'f46a3927-0639-4165-99d8-a02a9d26095d',
+        eventType: 'order_placed',
+        conversionRef: '260dd507-1173-499b-9bbf-f1383d6c6adb',
+        pagePath: '/'
+      })
+    });
+    assert.equal(conversion.status, 202);
+    const conversionInsert = statements.find(statement =>
+      statement.sql.includes('INSERT INTO site_analytics_events')
+      && statement.parameters[2] === 'order_placed'
+    );
+    assert.equal(conversionInsert.parameters[4], '260dd507-1173-499b-9bbf-f1383d6c6adb');
+
+    const invalidEvent = await fetch(`${baseUrl}/api/analytics/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventId: 'not-an-id',
+        visitorId: 'f46a3927-0639-4165-99d8-a02a9d26095d',
+        eventType: 'page_view',
+        pagePath: '/'
+      })
+    });
+    assert.equal(invalidEvent.status, 400);
+
+    const unauthorized = await fetch(`${baseUrl}/api/admin/site-analytics?range=7d`);
+    assert.equal(unauthorized.status, 401);
+    const notBaker = await fetch(`${baseUrl}/api/admin/site-analytics?range=7d`, {
+      headers: { Authorization: 'Bearer customer-token' }
+    });
+    assert.equal(notBaker.status, 403);
+
+    const report = await fetch(`${baseUrl}/api/admin/site-analytics?range=7d`, {
+      headers: { Authorization: 'Bearer baker-token' }
+    });
+    assert.equal(report.status, 200);
+    assert.deepEqual(await report.json(), {
+      visits: 40,
+      uniqueVisitors: 20,
+      conversions: 4,
+      conversionRate: 20,
+      daily: [{ date: '2026-11-11', visits: 5, uniqueVisitors: 4, conversions: 1 }],
+      recentEvents: [{
+        event_type: 'page_view',
+        page_path: '/',
+        created_at: '2026-11-11T10:00:00.000Z'
+      }]
+    });
+    assert.ok(statements.some(statement =>
+      statement.sql.includes('INSERT INTO site_analytics_events')
+      && statement.parameters[2] === 'page_view'
+    ));
+
+    const invalidRange = await fetch(`${baseUrl}/api/admin/site-analytics?range=365d`, {
+      headers: { Authorization: 'Bearer baker-token' }
+    });
+    assert.equal(invalidRange.status, 400);
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

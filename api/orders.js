@@ -1,9 +1,23 @@
 export const COOKIE_CATALOG = Object.freeze({
-  'Vanilla Butter Cookies': 220,
-  'Choco Chip Cookies': 260,
-  'Almond Cashew Cookies': 290,
-  'Coconut Cookies': 230,
-  'Sweet and Salty Zeera Cookies': 210
+  'Twin Cookie': 250,
+  'Mini Raisin Cookie': 250,
+  Nankhatai: 250,
+  'Coconut Cookies': 220,
+  'Choco Chip Cookies': 230,
+  'Almond Cashew Cookies': 250,
+  'Vanilla Butter Cookies': 200,
+  'Sweet and Salty Zeera Cookies': 200
+});
+
+export const COOKIE_PACK_SIZES = Object.freeze({
+  'Twin Cookie': 200,
+  'Mini Raisin Cookie': 200,
+  Nankhatai: 200,
+  'Coconut Cookies': 200,
+  'Choco Chip Cookies': 200,
+  'Almond Cashew Cookies': 200,
+  'Vanilla Butter Cookies': 200,
+  'Sweet and Salty Zeera Cookies': 200
 });
 
 const fail = message => ({ error: message });
@@ -79,9 +93,6 @@ export function validateOrderPayload(payload) {
     latitude = order.latitude;
     longitude = order.longitude;
     if (distanceKm > 10) return fail('Delivery is available only within 10 km.');
-    if (distanceKm > 5 && subtotal < (distanceKm > 7 ? 1000 : 500)) {
-      return fail(`The cookie subtotal does not meet the minimum for a ${distanceKm.toFixed(1)} km delivery.`);
-    }
     deliveryFee = distanceKm < 5 ? 100 : 200;
   }
 

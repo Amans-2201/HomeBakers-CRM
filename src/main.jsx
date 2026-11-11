@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { COOKIE_CATALOG } from '../api/orders.js';
+import { COOKIE_CATALOG, COOKIE_PACK_SIZES } from '../api/orders.js';
 import FirebaseCRMApp from './firebase-crm.jsx';
 import './style.css';
 
@@ -56,7 +56,7 @@ function Login({ onLogin }) {
     <main className="login-shell">
       <form className="login-card" onSubmit={submit}>
         <div className="brand-mark" aria-hidden="true">HB</div>
-        <p className="eyebrow">HOME BAKERS · PRIVATE CRM</p>
+        <p className="eyebrow">BUTTER BITE BAKERS</p>
         <h1>Welcome back</h1>
         <p className="muted">Sign in to review orders and customer activity.</p>
         <label htmlFor="password">Admin password</label>
@@ -135,9 +135,9 @@ function ManualOrderForm({ onSubmit, onCancel, busy }) {
         <div className="order-entry-row" key={item.name}>
           <select aria-label={`Cookie variety ${index + 1}`} onChange={event => changeItem(index, 'name', event.target.value)} value={item.name}>
             {productNames.filter(name => name === item.name || !items.some((other, otherIndex) => otherIndex !== index && other.name === name))
-              .map(name => <option key={name} value={name}>{name} · {currency.format(COOKIE_CATALOG[name])}</option>)}
+              .map(name => <option key={name} value={name}>{name} · {currency.format(COOKIE_CATALOG[name])} / {COOKIE_PACK_SIZES[name]}g</option>)}
           </select>
-          <input aria-label={`Quantity for ${item.name}`} max="99" min="1" onChange={event => changeItem(index, 'quantity', event.target.value)} required type="number" value={item.quantity} />
+          <input aria-label={`Quantity for ${item.name} (${COOKIE_PACK_SIZES[item.name]}g boxes)`} max="99" min="1" onChange={event => changeItem(index, 'quantity', event.target.value)} required type="number" value={item.quantity} />
           {items.length > 1 && <button aria-label={`Remove ${item.name}`} className="delete-button" onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))} type="button">Remove</button>}
         </div>
       ))}
@@ -525,9 +525,9 @@ function Dashboard({ onLogout }) {
   return (
     <main className="dashboard-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Home Bakers CRM home">
+        <a className="brand" href="/" aria-label="Butter Bite Bakers home">
           <span className="brand-mark small">HB</span>
-          <span>Home Bakers <small>Orders CRM</small></span>
+          <span>Butter Bite Bakers <small>Bakery dashboard</small></span>
         </a>
         <div className="topbar-actions">
           <button className="quiet-button" onClick={() => setActiveForm(activeForm === 'order' ? '' : 'order')} type="button">Add call order</button>

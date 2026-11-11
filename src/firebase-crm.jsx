@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { COOKIE_CATALOG, COOKIE_PACK_SIZES } from '../api/orders.js';
 
 const statusLabels = {
   pending: 'Order placed',
@@ -18,13 +19,11 @@ const sourceLabels = {
   other: 'Other'
 };
 
-const cookieMenu = [
-  { name: 'Vanilla Butter Cookies', unitPrice: 220 },
-  { name: 'Choco Chip Cookies', unitPrice: 260 },
-  { name: 'Almond Cashew Cookies', unitPrice: 290 },
-  { name: 'Coconut Cookies', unitPrice: 230 },
-  { name: 'Sweet and Salty Zeera Cookies', unitPrice: 210 }
-];
+const cookieMenu = Object.entries(COOKIE_CATALOG).map(([name, unitPrice]) => ({
+  name,
+  unitPrice,
+  packSizeGrams: COOKIE_PACK_SIZES[name]
+}));
 
 const emptyManualOrder = () => ({
   name: '',
@@ -54,6 +53,86 @@ const currency = new Intl.NumberFormat('en-IN', {
 
 function formatTimestamp(value) {
   return value?.toDate ? dateTime.format(value.toDate()) : 'Time not recorded';
+}
+
+function isInvoiceOrder(order) {
+  return order.fulfillment === 'pickup'
+    ? order.status === 'picked_up'
+    : order.status === 'delivered';
+}
+
+function escapeInvoiceText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
+}
+
+function downloadCrmInvoice(order) {
+  const invoiceWindow = window.open('', '_blank');
+  if (!invoiceWindow) {
+    window.alert('Allow pop-ups for this site to open and save the invoice as a PDF.');
+    return;
+  }
+
+  invoiceWindow.opener = null;
+  const invoiceReference = order.orderRef || order.id;
+  const invoiceDateValue = order.statusTimestamps?.[order.fulfillment === 'pickup' ? 'picked_up' : 'delivered']
+    || order.createdAt;
+  const invoiceDate = invoiceDateValue?.toDate ? invoiceDateValue.toDate() : new Date();
+  const items = Array.isArray(order.items) ? order.items : [];
+  const invoiceRows = items.map(item => {
+    const quantity = Number(item.quantity) || 0;
+    const unitPrice = Number(item.unitPrice) || 0;
+    return `<tr><td>${escapeInvoiceText(item.name || 'Cookie order')}</td><td class="number">${quantity}</td><td class="number">${currency.format(unitPrice)}</td><td class="number">${currency.format(quantity * unitPrice)}</td></tr>`;
+  }).join('');
+  const fulfillment = order.fulfillment === 'pickup' ? 'Bakery pickup' : 'Home delivery';
+  const address = order.fulfillment === 'pickup'
+    ? ''
+    : [order.address, order.pincode].filter(Boolean).join(', ');
+  const paymentStatus = order.paymentStatus === 'received'
+    ? 'Received'
+    : order.paymentStatus === 'reported'
+      ? 'Reported by customer; awaiting confirmation'
+      : 'Pending';
+
+  invoiceWindow.document.open();
+  invoiceWindow.document.write(`<!doctype html>
+    <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Invoice ${escapeInvoiceText(invoiceReference)}</title>
+    <style>
+      * { box-sizing: border-box; } body { margin: 0; padding: 32px; color: #29231f; font: 14px/1.5 Arial, sans-serif; }
+      main { max-width: 760px; margin: 0 auto; } header { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 20px; border-bottom: 2px solid #6d2e13; }
+      h1 { margin: 0; color: #6d2e13; font: 700 28px Georgia, serif; } h2 { margin: 0 0 8px; font-size: 15px; }
+      p { margin: 4px 0; } .muted { color: #74685f; } .invoice-meta { text-align: right; } section { margin-top: 24px; }
+      table { width: 100%; margin-top: 12px; border-collapse: collapse; } th, td { padding: 10px 8px; border-bottom: 1px solid #e8e1da; text-align: left; }
+      th { background: #f8f2eb; color: #57351f; font-size: 12px; } .number { text-align: right; white-space: nowrap; }
+      .totals { width: min(100%, 340px); margin: 18px 0 0 auto; } .totals p { display: flex; justify-content: space-between; gap: 20px; padding: 4px 0; }
+      .grand-total { margin-top: 6px !important; padding-top: 10px !important; border-top: 2px solid #6d2e13; color: #6d2e13; font-size: 18px; font-weight: 700; }
+      footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid #e8e1da; color: #74685f; text-align: center; } @media print { body { padding: 0; } }
+    </style></head><body><main>
+      <header><div><h1>Butter Bite Bakers</h1></div><div class="invoice-meta"><h2>ORDER INVOICE</h2>
+        <p><strong>Invoice:</strong> ${escapeInvoiceText(invoiceReference)}</p>
+        <p><strong>Date:</strong> ${escapeInvoiceText(invoiceDate.toLocaleDateString('en-IN'))}</p></div></header>
+      <section><h2>Bill to</h2><p>${escapeInvoiceText(order.customer?.name || 'Customer')}</p>
+        <p>${escapeInvoiceText(order.customer?.phone || '')}</p>
+        ${order.customer?.email ? `<p>${escapeInvoiceText(order.customer.email)}</p>` : ''}
+        <p class="muted">${escapeInvoiceText(fulfillment)}${address ? ` · ${escapeInvoiceText(address)}` : ''}</p></section>
+      <section><h2>Order details</h2><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Unit price</th><th class="number">Amount</th></tr></thead>
+        <tbody>${invoiceRows || '<tr><td colspan="4">Order details unavailable</td></tr>'}</tbody></table>
+        <div class="totals"><p><span>Subtotal</span><strong>${currency.format(Number(order.subtotal) || 0)}</strong></p>
+          <p><span>Delivery fee</span><strong>${currency.format(Number(order.deliveryFee) || 0)}</strong></p>
+          <p class="grand-total"><span>Total</span><strong>${currency.format(Number(order.total) || 0)}</strong></p>
+          <p><span>Payment status</span><strong>${escapeInvoiceText(paymentStatus)}</strong></p></div></section>
+      <footer>Thank you for supporting our bakery!</footer></main></body></html>`);
+  invoiceWindow.document.close();
+  window.setTimeout(() => {
+    invoiceWindow.focus();
+    invoiceWindow.print();
+  }, 250);
 }
 
 function getTimeline(order) {
@@ -128,7 +207,7 @@ function FirebaseLogin({ onSignedIn }) {
     <main className="login-shell">
       <form className="login-card" onSubmit={submit}>
         <div className="brand-mark" aria-hidden="true">HB</div>
-        <p className="eyebrow">HOME BAKERS · LIVE ORDERS CRM</p>
+        <p className="eyebrow">BUTTER BITE BAKERS</p>
         <h1>Welcome back</h1>
         <p className="muted">Sign in with the baker account used by the ordering portal.</p>
         <label htmlFor="crm-email">Baker email</label>
@@ -139,7 +218,6 @@ function FirebaseLogin({ onSignedIn }) {
         <button className="primary-button full-width" disabled={busy} type="submit">
           {busy ? 'Signing in…' : 'Sign in securely'}
         </button>
-        <p className="privacy-note">Order access is restricted to {window.BAKERY_ADMIN_EMAIL}.</p>
       </form>
     </main>
   );
@@ -166,8 +244,588 @@ function OrderTimeline({ order }) {
   );
 }
 
+const crmNavigationGroups = [
+  {
+    label: 'Overview',
+    links: [
+      { id: 'dashboard', label: 'Dashboard', icon: '▦' },
+      { id: 'realtime', label: 'Realtime', icon: '⌁' }
+    ]
+  },
+  {
+    label: 'Manage',
+    links: [
+      { id: 'customers', label: 'Customers', icon: '♙' },
+      { id: 'orders', label: 'Orders', icon: '▤' },
+      { id: 'invoices', label: 'Invoices', icon: '▧' }
+    ]
+  },
+  {
+    label: 'Insights',
+    links: [{ id: 'analytics', label: 'Analytics', icon: '▥' }]
+  }
+];
+
+function CRMPageLayout({ activePage, onNavigate, onLogout, children }) {
+  return (
+    <div className="crm-app-shell">
+      <aside className="crm-sidebar">
+        <a className="crm-sidebar-brand" href="/" aria-label="Butter Bite Bakers CRM">
+          <span className="crm-sidebar-mark">HB</span>
+          <span>Butter Bite Bakers<small>Bakery dashboard</small></span>
+        </a>
+        <nav aria-label="CRM navigation" className="crm-sidebar-nav">
+          {crmNavigationGroups.map(group => (
+            <section className="crm-nav-group" key={group.label}>
+              <p>{group.label}</p>
+              {group.links.map(link => (
+                <button
+                  aria-current={activePage === link.id ? 'page' : undefined}
+                  className={`crm-nav-link ${activePage === link.id ? 'is-active' : ''}`}
+                  key={link.id}
+                  onClick={() => onNavigate(link.id)}
+                  type="button"
+                >
+                  <span aria-hidden="true">{link.icon}</span>{link.label}
+                </button>
+              ))}
+            </section>
+          ))}
+        </nav>
+        <div className="crm-sidebar-footer">
+          <a className="crm-nav-link" href="https://butterbitebakers.web.app/">
+            <span aria-hidden="true">↗</span>Storefront
+          </a>
+          <button className="crm-nav-link" onClick={onLogout} type="button">
+            <span aria-hidden="true">⇥</span>Sign out
+          </button>
+        </div>
+      </aside>
+      <div className="crm-main">{children}</div>
+    </div>
+  );
+}
+
+function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavigate, onLogout }) {
+  const [range, setRange] = useState('30d');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const loadSequence = useRef(0);
+
+  const loadAnalytics = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    setLoading(true);
+    setError('');
+    try {
+      const endpoint = window.BAKERY_SITE_ANALYTICS_DASHBOARD_URL;
+      if (!endpoint) throw new Error('The PostgreSQL site analytics endpoint is not configured.');
+      const token = await user.getIdToken();
+      const response = await fetch(`${endpoint}?range=${activePage === 'realtime' ? '1d' : range}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store'
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `Analytics service returned HTTP ${response.status}.`);
+      if (!Number.isFinite(result.visits)
+        || !Number.isFinite(result.uniqueVisitors)
+        || !Number.isFinite(result.conversions)
+        || !Array.isArray(result.daily)
+        || !Array.isArray(result.recentEvents)) {
+        throw new Error('The analytics API returned an unexpected response. Deploy the updated Render service and try again.');
+      }
+      if (sequence === loadSequence.current) setData(result);
+    } catch (loadError) {
+      if (sequence === loadSequence.current) setError(`Could not load website analytics: ${loadError.message}`);
+    } finally {
+      if (sequence === loadSequence.current) setLoading(false);
+    }
+  }, [activePage, range, user]);
+
+  useEffect(() => {
+    void loadAnalytics();
+    if (activePage !== 'realtime') return undefined;
+    const timer = window.setInterval(() => { void loadAnalytics(); }, 30000);
+    return () => window.clearInterval(timer);
+  }, [activePage, loadAnalytics]);
+
+  const pageTitle = activePage === 'dashboard'
+    ? 'Dashboard'
+    : activePage === 'realtime'
+      ? 'Realtime activity'
+      : 'Website analytics';
+  const dailyRows = data?.daily || [];
+  const maxVisits = Math.max(1, ...dailyRows.map(row => Number(row.visits) || 0));
+  const orderCount = orders.length;
+  const pendingCount = orders.filter(order => order.status === 'pending').length;
+  const activeCount = orders.filter(order => !['delivered', 'picked_up', 'rejected'].includes(order.status)).length;
+  const orderValue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+
+  return (
+    <CRMPageLayout activePage={activePage} onLogout={onLogout} onNavigate={onNavigate}>
+    <main className="dashboard-shell crm-insights-page">
+      <header className="topbar">
+        <div className="topbar-actions">
+          <a className="quiet-button crm-storefront-link" href="https://butterbitebakers.web.app/">Storefront</a>
+          <button className="quiet-button" onClick={() => { void loadAnalytics(); }} type="button">Refresh</button>
+        </div>
+      </header>
+      <section className="welcome-row">
+        <div>
+          <p className="eyebrow">{activePage === 'realtime' ? 'LIVE STOREFRONT ACTIVITY' : 'BUTTER BITE BAKERS · INSIGHTS'}</p>
+          <h1>{pageTitle}</h1>
+          <p className="muted">Website visits and checkout conversions, stored in PostgreSQL. Signed in as {user.email}.</p>
+        </div>
+        <span className="live-indicator"><span />{activePage === 'realtime' ? 'Today · updates every 30 seconds' : 'Live storefront data'}</span>
+      </section>
+
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {activePage === 'dashboard' && (
+        <section className="summary-grid crm-overview-grid" aria-label="Order overview">
+          <article className="summary-card"><p>Orders</p><strong>{ordersLoading ? '—' : orderCount}</strong><span>All live portal orders</span></article>
+          <article className="summary-card"><p>Needs action</p><strong>{ordersLoading ? '—' : pendingCount}</strong><span>Awaiting acceptance</span></article>
+          <article className="summary-card"><p>In progress</p><strong>{ordersLoading ? '—' : activeCount}</strong><span>Not yet completed</span></article>
+          <article className="summary-card"><p>Order value</p><strong>{ordersLoading ? '—' : currency.format(orderValue)}</strong><span>All live portal orders</span></article>
+        </section>
+      )}
+
+      {activePage !== 'realtime' && (
+        <>
+          <div className="crm-analytics-toolbar">
+            <div><p className="eyebrow">STOREFRONT PERFORMANCE</p><h2>{activePage === 'dashboard' ? 'Your storefront' : 'Site activity'}</h2></div>
+            <div aria-label="Analytics date range" className="crm-range-switch" role="group">
+              {['7d', '30d', '90d'].map(value => (
+                <button
+                  aria-pressed={range === value}
+                  className={range === value ? 'is-active' : ''}
+                  key={value}
+                  onClick={() => setRange(value)}
+                  type="button"
+                >{value}</button>
+              ))}
+            </div>
+          </div>
+          <section aria-label="Website analytics totals" className="summary-grid crm-site-summary">
+            <article className="summary-card"><p>Site visits</p><strong>{loading ? '—' : Number(data?.visits || 0).toLocaleString('en-IN')}</strong><span>Storefront page views</span></article>
+            <article className="summary-card"><p>Unique visitors</p><strong>{loading ? '—' : Number(data?.uniqueVisitors || 0).toLocaleString('en-IN')}</strong><span>Approx. unique browsers</span></article>
+            <article className="summary-card"><p>Conversions</p><strong>{loading ? '—' : Number(data?.conversions || 0).toLocaleString('en-IN')}</strong><span>Storefront orders placed</span></article>
+            <article className="summary-card"><p>Conversion rate</p><strong>{loading ? '—' : `${Number(data?.conversionRate || 0).toLocaleString('en-IN')}%`}</strong><span>Orders per unique visitor</span></article>
+          </section>
+          <section className="panel crm-analytics-panel">
+            <div className="panel-heading">
+              <div><p className="eyebrow">VISITS & CONVERSIONS</p><h2>Daily storefront activity</h2></div>
+              <div className="crm-chart-legend"><span><i className="visits" />Visits</span><span><i className="visitors" />Unique visitors</span></div>
+            </div>
+            {loading && <p className="loading-state">Loading analytics…</p>}
+            {!loading && !error && dailyRows.length === 0 && <p className="empty-state">No storefront activity recorded for this period yet.</p>}
+            {!loading && dailyRows.length > 0 && (
+              <div aria-label="Daily visits and unique visitors" className="crm-analytics-chart" role="img">
+                {dailyRows.map(row => {
+                  const visits = Number(row.visits) || 0;
+                  const visitors = Number(row.uniqueVisitors) || 0;
+                  const dateLabel = new Date(`${row.date}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+                  return (
+                    <div className="crm-chart-day" key={row.date} title={`${dateLabel}: ${visits} visits, ${visitors} unique visitors, ${Number(row.conversions) || 0} conversions`}>
+                      <div className="crm-chart-bars">
+                        <span className="visits" style={{ height: `${Math.max(visits ? 3 : 0, visits / maxVisits * 100)}%` }} />
+                        <span className="visitors" style={{ height: `${Math.max(visitors ? 3 : 0, visitors / maxVisits * 100)}%` }} />
+                      </div>
+                      <small>{dateLabel}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {(activePage === 'realtime' || activePage === 'analytics') && (
+        <section className="panel crm-analytics-panel">
+          <div className="panel-heading">
+            <div><p className="eyebrow">{activePage === 'realtime' ? 'LATEST EVENTS' : 'RECENT STOREFRONT EVENTS'}</p><h2>{activePage === 'realtime' ? 'Activity feed' : 'Recent activity'}</h2></div>
+            <span className="live-indicator"><span />{activePage === 'realtime' ? 'Today' : range}</span>
+          </div>
+          {loading && <p className="loading-state">Loading activity…</p>}
+          {!loading && !error && !data?.recentEvents?.length && <p className="empty-state">No activity recorded for this period yet. Visits and orders will appear here as they happen.</p>}
+          <ol className="crm-activity-list">
+            {(data?.recentEvents || []).map((event, index) => (
+              <li key={`${event.created_at}-${index}`}>
+                <span aria-hidden="true" className={`crm-activity-icon ${event.event_type === 'order_placed' ? 'is-conversion' : ''}`}>
+                  {event.event_type === 'order_placed' ? '✓' : '↗'}
+                </span>
+                <div><strong>{event.event_type === 'order_placed' ? 'Order placed' : 'Storefront visit'}</strong><span>{event.page_path}</span></div>
+                <time>{event.created_at ? new Date(event.created_at).toLocaleString('en-IN') : 'Just now'}</time>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      <footer className="footer-note">Analytics use anonymous browser IDs and order references; no IP address or customer contact details are stored with site activity.</footer>
+    </main>
+    </CRMPageLayout>
+  );
+}
+
+function FirebaseCustomersPage({ user, onNavigate, onLogout }) {
+  const [customers, setCustomers] = useState([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [editingId, setEditingId] = useState('');
+  const [draft, setDraft] = useState(null);
+  const [busyCustomer, setBusyCustomer] = useState('');
+
+  useEffect(() => {
+    const unsubscribe = window.firebase.firestore()
+      .collection('customerProfiles')
+      .onSnapshot(snapshot => {
+        const profiles = snapshot.docs
+          .map(document => ({ id: document.id, ...document.data() }))
+          .sort((first, second) => String(first.name || '').localeCompare(String(second.name || '')));
+        setCustomers(profiles);
+        setLoading(false);
+        setError('');
+      }, snapshotError => {
+        setLoading(false);
+        setError(snapshotError.code === 'permission-denied'
+          ? 'Customer access denied. Deploy the latest Firestore rules and sign in with the authorized baker account.'
+          : `Could not load customer profiles: ${snapshotError.message}`);
+      });
+    return unsubscribe;
+  }, []);
+
+  const filteredCustomers = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return customers;
+    return customers.filter(customer => [
+      customer.name,
+      customer.phone,
+      customer.address,
+      customer.pincode,
+      customer.id
+    ].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+  }, [customers, search]);
+
+  function startEditing(customer) {
+    setError('');
+    setSuccess('');
+    setEditingId(customer.id);
+    setDraft({
+      name: customer.name || '',
+      phone: customer.phone || '',
+      address: customer.address || '',
+      pincode: customer.pincode || '',
+      latitude: customer.latitude == null ? '' : String(customer.latitude),
+      longitude: customer.longitude == null ? '' : String(customer.longitude)
+    });
+  }
+
+  async function saveCustomer(event, customer) {
+    event.preventDefault();
+    setError('');
+    setSuccess('');
+
+    const latitude = draft.latitude.trim() === '' ? null : Number(draft.latitude);
+    const longitude = draft.longitude.trim() === '' ? null : Number(draft.longitude);
+    if (!draft.name.trim() || !draft.phone.trim()) {
+      setError('Customer name and phone are required.');
+      return;
+    }
+    if ((latitude === null) !== (longitude === null)
+      || (latitude !== null && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90))
+      || (longitude !== null && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
+      setError('Enter both valid map coordinates, or leave both fields blank.');
+      return;
+    }
+
+    setBusyCustomer(customer.id);
+    try {
+      await window.firebase.firestore().collection('customerProfiles').doc(customer.id).update({
+        name: draft.name.trim(),
+        phone: draft.phone.trim(),
+        address: draft.address.trim(),
+        pincode: draft.pincode.trim(),
+        latitude,
+        longitude
+      });
+      setEditingId('');
+      setDraft(null);
+      setSuccess(`Saved changes for ${draft.name.trim()}.`);
+    } catch (saveError) {
+      setError(`Could not update customer profile: ${saveError.message}`);
+    } finally {
+      setBusyCustomer('');
+    }
+  }
+
+  async function deleteCustomer(customer) {
+    const name = customer.name || 'this customer';
+    setError('');
+    setSuccess('');
+    setBusyCustomer(customer.id);
+    try {
+      const firestore = window.firebase.firestore();
+      const linkedOrders = await firestore.collection('orders')
+        .where('customerUid', '==', customer.id)
+        .get();
+      const ordersToDelete = new Map(linkedOrders.docs.map(orderDocument => [orderDocument.id, orderDocument]));
+      const normalizedPhone = String(customer.phone || '').replace(/\D/g, '');
+      const matchingProfiles = normalizedPhone
+        ? customers.filter(profile => String(profile.phone || '').replace(/\D/g, '') === normalizedPhone)
+        : [];
+      const phoneIsUnique = matchingProfiles.length === 1;
+      let unlinkedPhoneOrderCount = 0;
+      if (phoneIsUnique && customer.phone) {
+        const phoneOrders = await firestore.collection('orders')
+          .where('customer.phone', '==', customer.phone)
+          .get();
+        phoneOrders.docs.forEach(orderDocument => {
+          if (!orderDocument.data().customerUid && !ordersToDelete.has(orderDocument.id)) {
+            ordersToDelete.set(orderDocument.id, orderDocument);
+            unlinkedPhoneOrderCount += 1;
+          }
+        });
+      }
+
+      const orderCount = ordersToDelete.size;
+      const phoneScope = unlinkedPhoneOrderCount
+        ? ` This includes ${unlinkedPhoneOrderCount} unlinked order${unlinkedPhoneOrderCount === 1 ? '' : 's'} with the same unique phone number.`
+        : '';
+      const ambiguityNote = !phoneIsUnique && normalizedPhone
+        ? ' Manual orders with a shared phone number are excluded to avoid deleting another customer’s data.'
+        : '';
+      if (!window.confirm(`Permanently delete ${name}'s saved profile and ${orderCount} associated order${orderCount === 1 ? '' : 's'}? Generated invoices from those orders will also be removed.${phoneScope}${ambiguityNote} The Firebase sign-in account remains.`)) return;
+
+      const documents = [...ordersToDelete.values()];
+      for (let start = 0; start < documents.length; start += 450) {
+        const batch = firestore.batch();
+        documents.slice(start, start + 450).forEach(orderDocument => batch.delete(orderDocument.ref));
+        await batch.commit();
+      }
+      await firestore.collection('customerProfiles').doc(customer.id).delete();
+      if (editingId === customer.id) {
+        setEditingId('');
+        setDraft(null);
+      }
+      setSuccess(`Deleted ${name}'s saved profile and ${orderCount} associated order${orderCount === 1 ? '' : 's'} with their generated invoices. Their Firebase sign-in account remains.`);
+    } catch (deleteError) {
+      setError(`Could not delete the customer profile and order history: ${deleteError.message}. If multiple delete batches were needed, some orders may already be deleted; retry to finish removing the remaining data.`);
+    } finally {
+      setBusyCustomer('');
+    }
+  }
+
+  return (
+    <CRMPageLayout activePage="customers" onLogout={onLogout} onNavigate={onNavigate}>
+    <main className="dashboard-shell">
+      <header className="topbar">
+        <div className="topbar-actions">
+          <a className="quiet-button crm-storefront-link" href="https://butterbitebakers.web.app/">Storefront</a>
+        </div>
+      </header>
+
+      <section className="welcome-row">
+        <div>
+          <p className="eyebrow">CUSTOMER PROFILES</p>
+          <h1>Customers</h1>
+          <p className="muted">Saved customer details from the storefront. Signed in as {user.email}.</p>
+        </div>
+        <span className="live-indicator"><span /> Live Firestore sync</span>
+      </section>
+
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {success && <div className="success-banner" role="status">{success}</div>}
+
+      <section className="panel crm-customers-panel">
+        <div className="panel-heading orders-heading">
+          <div>
+            <p className="eyebrow">STOREFRONT CUSTOMERS</p>
+            <h2>{customers.length} saved {customers.length === 1 ? 'customer' : 'customers'}</h2>
+          </div>
+          <div className="crm-live-filters">
+            <input
+              aria-label="Search customers"
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Search name, phone, address, PIN, UID"
+              type="search"
+              value={search}
+            />
+          </div>
+        </div>
+
+        {loading && <p className="loading-state">Loading customer profiles…</p>}
+        {!loading && customers.length === 0 && <p className="empty-state">No saved customer profiles yet.</p>}
+        {!loading && customers.length > 0 && filteredCustomers.length === 0 && <p className="empty-state">No customers match your search.</p>}
+
+        <div className="crm-customer-list">
+          {filteredCustomers.map(customer => {
+            const isEditing = editingId === customer.id;
+            const isBusy = busyCustomer === customer.id;
+            return (
+              <article className="crm-customer-card" key={customer.id}>
+                <div className="crm-customer-heading">
+                  <div>
+                    <p className="eyebrow">CUSTOMER</p>
+                    <h3>{customer.name || 'Unnamed customer'}</h3>
+                    <p className="crm-customer-uid">Firebase UID: {customer.id}</p>
+                  </div>
+                  {!isEditing && (
+                    <div className="crm-customer-actions">
+                      <button className="quiet-button" disabled={isBusy} onClick={() => startEditing(customer)} type="button">Edit</button>
+                      <button className="delete-button" disabled={isBusy} onClick={() => deleteCustomer(customer)} type="button">
+                        {isBusy ? 'Working…' : 'Delete'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isEditing ? (
+                  <form className="crm-customer-form" onSubmit={event => saveCustomer(event, customer)}>
+                    <label>Customer name *
+                      <input autoComplete="name" onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} required value={draft.name} />
+                    </label>
+                    <label>Phone *
+                      <input autoComplete="tel" onChange={event => setDraft(current => ({ ...current, phone: event.target.value }))} required type="tel" value={draft.phone} />
+                    </label>
+                    <label className="crm-customer-wide">Address
+                      <textarea autoComplete="street-address" onChange={event => setDraft(current => ({ ...current, address: event.target.value }))} rows="2" value={draft.address} />
+                    </label>
+                    <label>PIN code
+                      <input autoComplete="postal-code" onChange={event => setDraft(current => ({ ...current, pincode: event.target.value }))} value={draft.pincode} />
+                    </label>
+                    <label>Latitude
+                      <input onChange={event => setDraft(current => ({ ...current, latitude: event.target.value }))} step="any" type="number" value={draft.latitude} />
+                    </label>
+                    <label>Longitude
+                      <input onChange={event => setDraft(current => ({ ...current, longitude: event.target.value }))} step="any" type="number" value={draft.longitude} />
+                    </label>
+                    <div className="crm-customer-form-actions">
+                      <button className="quiet-button" disabled={isBusy} onClick={() => { setEditingId(''); setDraft(null); }} type="button">Cancel</button>
+                      <button className="primary-button" disabled={isBusy} type="submit">{isBusy ? 'Saving…' : 'Save changes'}</button>
+                    </div>
+                  </form>
+                ) : (
+                  <dl className="crm-customer-details">
+                    <div><dt>Phone</dt><dd>{customer.phone || 'Not provided'}</dd></div>
+                    <div><dt>Address</dt><dd>{customer.address || 'Not provided'}</dd></div>
+                    <div><dt>PIN code</dt><dd>{customer.pincode || 'Not provided'}</dd></div>
+                    <div><dt>Latitude</dt><dd>{customer.latitude ?? 'Not provided'}</dd></div>
+                    <div><dt>Longitude</dt><dd>{customer.longitude ?? 'Not provided'}</dd></div>
+                  </dl>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+      <footer className="footer-note">Deleting a profile also removes orders linked by Firebase UID and unlinked manual orders with a unique matching phone. Orders with a phone shared across profiles are not included. The Firebase sign-in account is not deleted.</footer>
+    </main>
+    </CRMPageLayout>
+  );
+}
+
+function FirebaseInvoicesPage({ user, onLogout, onNavigate, orders, loading, error }) {
+  const [search, setSearch] = useState('');
+  const invoiceOrders = useMemo(() => orders.filter(isInvoiceOrder), [orders]);
+  const filteredInvoices = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return invoiceOrders;
+    return invoiceOrders.filter(order => [
+      order.orderRef,
+      order.customer?.name,
+      order.customer?.phone,
+      order.customer?.email,
+      order.fulfillment,
+      order.paymentStatus
+    ].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+  }, [invoiceOrders, search]);
+  const invoicedTotal = invoiceOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+
+  return (
+    <CRMPageLayout activePage="invoices" onLogout={onLogout} onNavigate={onNavigate}>
+    <main className="dashboard-shell">
+      <header className="topbar">
+        <div className="topbar-actions">
+          <a className="quiet-button crm-storefront-link" href="https://butterbitebakers.web.app/">Storefront</a>
+        </div>
+      </header>
+
+      <section className="welcome-row">
+        <div>
+          <p className="eyebrow">COMPLETED CUSTOMER ORDERS</p>
+          <h1>Invoices</h1>
+          <p className="muted">Invoices are generated from delivered or picked-up orders. Signed in as {user.email}.</p>
+        </div>
+        <span className="live-indicator"><span /> Live Firestore sync</span>
+      </section>
+
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <section className="summary-grid invoice-summary-grid" aria-label="Invoice totals">
+        <article className="summary-card"><p>Invoices</p><strong>{invoiceOrders.length}</strong><span>Delivered and picked-up orders</span></article>
+        <article className="summary-card"><p>Invoice total</p><strong>{currency.format(invoicedTotal)}</strong><span>Combined order totals</span></article>
+      </section>
+
+      <section className="panel crm-invoices-panel">
+        <div className="panel-heading orders-heading">
+          <div>
+            <p className="eyebrow">INVOICE REGISTER</p>
+            <h2>{filteredInvoices.length} {filteredInvoices.length === 1 ? 'invoice' : 'invoices'}</h2>
+          </div>
+          <div className="crm-live-filters">
+            <input
+              aria-label="Search invoices"
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Search invoice, customer, phone"
+              type="search"
+              value={search}
+            />
+          </div>
+        </div>
+        {loading && <p className="loading-state">Loading invoices…</p>}
+        {!loading && invoiceOrders.length === 0 && <p className="empty-state">No invoices yet. They appear when an order is delivered or picked up.</p>}
+        {!loading && invoiceOrders.length > 0 && filteredInvoices.length === 0 && <p className="empty-state">No invoices match your search.</p>}
+        <div className="crm-invoice-list">
+          {filteredInvoices.map(order => {
+            const paymentLabel = order.paymentStatus === 'received'
+              ? 'Received'
+              : order.paymentStatus === 'reported'
+                ? 'Reported; awaiting confirmation'
+                : 'Pending';
+            const completedAt = order.statusTimestamps?.[order.fulfillment === 'pickup' ? 'picked_up' : 'delivered']
+              || order.createdAt;
+            return (
+              <article className="crm-invoice-card" key={order.id}>
+                <div className="crm-invoice-heading">
+                  <div>
+                    <p className="eyebrow">INVOICE {order.orderRef || order.id}</p>
+                    <h3>{order.customer?.name || 'Customer'}</h3>
+                  </div>
+                  <strong className="crm-invoice-total">{currency.format(Number(order.total) || 0)}</strong>
+                </div>
+                <dl className="crm-invoice-details">
+                  <div><dt>Invoice date</dt><dd>{formatTimestamp(completedAt)}</dd></div>
+                  <div><dt>Fulfillment</dt><dd>{order.fulfillment === 'pickup' ? 'Picked up' : 'Delivered'}</dd></div>
+                  <div><dt>Payment</dt><dd>{paymentLabel}</dd></div>
+                  <div><dt>Customer contact</dt><dd>{[order.customer?.phone, order.customer?.email].filter(Boolean).join(' · ') || 'Not provided'}</dd></div>
+                  <div className="crm-invoice-items"><dt>Items</dt><dd>{(order.items || []).map(item => `${item.name} × ${item.quantity}`).join(', ') || 'Order details unavailable'}</dd></div>
+                </dl>
+                <button className="primary-button crm-invoice-download" onClick={() => downloadCrmInvoice(order)} type="button">Download invoice</button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+      <footer className="footer-note">Invoice details are derived from completed orders. Removing a linked order also removes its invoice from this register.</footer>
+    </main>
+    </CRMPageLayout>
+  );
+}
+
 function FirebaseOrdersCRM({ user, onLogout }) {
   const [orders, setOrders] = useState([]);
+  const [activePage, setActivePage] = useState('dashboard');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -177,12 +835,42 @@ function FirebaseOrdersCRM({ user, onLogout }) {
   const [manualOrder, setManualOrder] = useState(emptyManualOrder);
   const [savingManualOrder, setSavingManualOrder] = useState(false);
   const [success, setSuccess] = useState('');
+  const [paymentNotification, setPaymentNotification] = useState('');
+  const previousPaymentStatuses = useRef(new Map());
+  const hasReceivedInitialOrders = useRef(false);
 
   useEffect(() => {
     const unsubscribe = window.firebase.firestore()
       .collection('orders')
       .orderBy('createdAt', 'desc')
       .onSnapshot(snapshot => {
+        const newPaymentReports = [];
+        snapshot.docChanges().forEach(change => {
+          const order = change.doc.data();
+          const paymentStatus = order.paymentStatus || 'unpaid';
+          const previousStatus = previousPaymentStatuses.current.get(change.doc.id);
+          if (hasReceivedInitialOrders.current
+            && change.type === 'modified'
+            && previousStatus !== 'reported'
+            && paymentStatus === 'reported') {
+            newPaymentReports.push(`${order.customer?.name || 'Customer'} · ${order.orderRef || change.doc.id}`);
+          }
+          previousPaymentStatuses.current.set(change.doc.id, paymentStatus);
+        });
+        hasReceivedInitialOrders.current = true;
+        const pendingPayments = snapshot.docs
+          .filter(document => document.data().paymentStatus === 'reported')
+          .map(document => {
+            const order = document.data();
+            return `${order.customer?.name || 'Customer'} · ${order.orderRef || document.id}`;
+          });
+        if (pendingPayments.length) {
+          setPaymentNotification(newPaymentReports.length
+            ? `New payment report${newPaymentReports.length === 1 ? '' : 's'} received. Awaiting confirmation: ${pendingPayments.join(', ')}.`
+            : `Payment awaiting confirmation: ${pendingPayments.join(', ')}.`);
+        } else {
+          setPaymentNotification('');
+        }
         setOrders(snapshot.docs.map(document => ({ id: document.id, ...document.data() })));
         setLoading(false);
         setError('');
@@ -220,6 +908,38 @@ function FirebaseOrdersCRM({ user, onLogout }) {
   const manualDeliveryFee = manualOrder.fulfillment === 'delivery' && manualOrder.distanceKm !== ''
     ? (manualDistance < 5 ? 100 : 200)
     : 0;
+
+  if (activePage === 'customers') {
+    return (
+      <FirebaseCustomersPage
+        onLogout={onLogout}
+        onNavigate={setActivePage}
+        user={user}
+      />
+    );
+  }
+  if (activePage === 'invoices') {
+    return (
+      <FirebaseInvoicesPage
+        error={error}
+        loading={loading}
+        onLogout={onLogout}
+        onNavigate={setActivePage}
+        orders={orders}
+        user={user}
+      />
+    );
+  }
+  if (['dashboard', 'realtime', 'analytics'].includes(activePage)) {
+    return <WebsiteAnalyticsPage
+      activePage={activePage}
+      onLogout={onLogout}
+      onNavigate={setActivePage}
+      ordersLoading={loading}
+      orders={orders}
+      user={user}
+    />;
+  }
 
   function updateManualOrder(field, value) {
     setManualOrder(current => ({ ...current, [field]: value }));
@@ -330,6 +1050,7 @@ function FirebaseOrdersCRM({ user, onLogout }) {
         deliveryFee,
         total: subtotal + deliveryFee,
         status: 'pending',
+        paymentStatus: 'unpaid',
         statusTimestamps: {
           placed: window.firebase.firestore.FieldValue.serverTimestamp()
         },
@@ -387,6 +1108,23 @@ function FirebaseOrdersCRM({ user, onLogout }) {
     }
   }
 
+  async function confirmPaymentReceived(order) {
+    setBusyOrder(order.id);
+    setError('');
+    setSuccess('');
+    try {
+      await window.firebase.firestore().collection('orders').doc(order.id).update({
+        paymentStatus: 'received',
+        paymentReceivedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      });
+      setSuccess(`Payment received confirmed for order ${order.orderRef || order.id}. The customer will be notified.`);
+    } catch (updateError) {
+      setError(`Could not confirm payment receipt: ${updateError.message}`);
+    } finally {
+      setBusyOrder('');
+    }
+  }
+
   async function deleteOrder(order) {
     const orderReference = order.orderRef || order.id;
     const customerName = order.customer?.name || 'this customer';
@@ -404,15 +1142,11 @@ function FirebaseOrdersCRM({ user, onLogout }) {
   }
 
   return (
+    <CRMPageLayout activePage="orders" onLogout={onLogout} onNavigate={setActivePage}>
     <main className="dashboard-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Home Bakers CRM home">
-          <span className="brand-mark small">HB</span>
-          <span>Home Bakers <small>Live Orders CRM</small></span>
-        </a>
         <div className="topbar-actions">
           <a className="quiet-button crm-storefront-link" href="https://butterbitebakers.web.app/">Storefront</a>
-          <button className="quiet-button" onClick={onLogout} type="button">Sign out</button>
         </div>
       </header>
 
@@ -427,6 +1161,12 @@ function FirebaseOrdersCRM({ user, onLogout }) {
 
       {error && <div className="error-banner" role="alert">{error}</div>}
       {success && <div className="success-banner" role="status">{success}</div>}
+      {paymentNotification && (
+        <div className="payment-notification-banner" role="alert">
+          <span>{paymentNotification}</span>
+          <button className="quiet-button" onClick={() => setPaymentNotification('')} type="button">Dismiss</button>
+        </div>
+      )}
 
       <section className="summary-grid crm-live-summary" aria-label="Live order totals">
         <article className="summary-card"><p>Orders</p><strong>{orders.length}</strong><span>All portal orders</span></article>
@@ -507,10 +1247,10 @@ function FirebaseOrdersCRM({ user, onLogout }) {
               <div className="manual-cookie-row" key={`manual-item-${index}`}>
                 <label>Cookie variety
                   <select onChange={event => updateManualOrderItem(index, 'name', event.target.value)} value={item.name}>
-                    {cookieMenu.map(cookie => <option key={cookie.name} value={cookie.name}>{cookie.name} · {currency.format(cookie.unitPrice)} / 250g</option>)}
+                    {cookieMenu.map(cookie => <option key={cookie.name} value={cookie.name}>{cookie.name} · {currency.format(cookie.unitPrice)} / {cookie.packSizeGrams}g</option>)}
                   </select>
                 </label>
-                <label>250g boxes
+                <label>{COOKIE_PACK_SIZES[item.name]}g boxes
                   <input min="1" onChange={event => updateManualOrderItem(index, 'quantity', event.target.value)} required step="1" type="number" value={item.quantity} />
                 </label>
                 <button className="delete-button" disabled={manualOrder.items.length === 1} onClick={() => setManualOrder(current => ({
@@ -578,6 +1318,26 @@ function FirebaseOrdersCRM({ user, onLogout }) {
                 <p><strong>Placed:</strong> {formatTimestamp(order.statusTimestamps?.placed || order.createdAt)}</p>
               </div>
 
+              {(order.paymentStatus || 'unpaid') === 'reported' && (
+                <div className="crm-payment-notice" role="status">
+                  <div>
+                    <strong>Customer reported payment</strong>
+                    <p>Verify the payment in your account before confirming receipt.</p>
+                  </div>
+                  <button
+                    className="crm-status-action crm-status-action--accept"
+                    disabled={busyOrder === order.id}
+                    onClick={() => confirmPaymentReceived(order)}
+                    type="button"
+                  >
+                    {busyOrder === order.id ? 'Confirming…' : 'Confirm payment received'}
+                  </button>
+                </div>
+              )}
+              {(order.paymentStatus || 'unpaid') === 'received' && (
+                <p className="crm-payment-confirmed" role="status">Payment received. Customer has been notified.</p>
+              )}
+
               <OrderTimeline order={order} />
 
               <div className="crm-order-actions">
@@ -607,6 +1367,7 @@ function FirebaseOrdersCRM({ user, onLogout }) {
       </section>
       <footer className="footer-note">Customer orders and status updates are shared live with the storefront through Firebase.</footer>
     </main>
+    </CRMPageLayout>
   );
 }
 
