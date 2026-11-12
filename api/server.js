@@ -10,6 +10,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { createOrderNotificationHandler } from './order-notifications.js';
 import { getFirestoreOrder } from './firebase-firestore.js';
 import { buildOrderEmail } from './order-email.js';
+import { normalizePublicIp } from './ip-address.js';
 import { validateManualOrderPayload, validateOrderPayload } from './orders.js';
 import { createSessionToken, passwordMatches, verifySessionToken } from './security.js';
 
@@ -175,7 +176,7 @@ export function createApp({
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
   app.use((request, response, next) => {
     response.set({
       'X-Content-Type-Options': 'nosniff',
@@ -226,7 +227,7 @@ export function createApp({
       }
 
       try {
-        const publicIp = request.ip;
+        const publicIp = normalizePublicIp(request.ip);
         await pool.query(
           `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref, public_ip)
            VALUES ($1, $2, $3, $4, $5, $6)

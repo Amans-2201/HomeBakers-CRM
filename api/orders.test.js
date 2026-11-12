@@ -437,7 +437,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
         return { rows: [{ date: '2026-11-11', visits: 5, uniqueVisitors: 4, conversions: 1 }] };
       }
       if (sql.includes('SELECT event_type, page_path, public_ip')) {
-        return { rows: [{ event_type: 'page_view', page_path: '/', public_ip: '203.0.113.42', created_at: '2026-11-11T10:00:00.000Z' }] };
+        return { rows: [{ event_type: 'page_view', page_path: '/', public_ip: '8.8.8.8', created_at: '2026-11-11T10:00:00.000Z' }] };
       }
       return { rows: [] };
     }
@@ -460,7 +460,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       headers: {
         Origin: 'https://butterbitebakers.web.app',
         'Content-Type': 'application/json',
-        'X-Forwarded-For': '203.0.113.42'
+        'X-Forwarded-For': '198.51.100.8, 8.8.8.8, 10.30.0.9'
       },
       body: JSON.stringify({
         eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1d',
@@ -476,14 +476,35 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       statement.sql.includes('INSERT INTO site_analytics_events')
       && statement.parameters[2] === 'page_view'
     );
-    assert.equal(pageViewInsert.parameters[5], '203.0.113.42');
+    assert.equal(pageViewInsert.parameters[5], '8.8.8.8');
+
+    const privateAddressEvent = await fetch(`${baseUrl}/api/analytics/events`, {
+      method: 'POST',
+      headers: {
+        Origin: 'https://butterbitebakers.web.app',
+        'Content-Type': 'application/json',
+        'X-Forwarded-For': '10.30.0.9'
+      },
+      body: JSON.stringify({
+        eventId: '61c7ca43-a11e-44e1-a8fc-f2d276a18f1d',
+        visitorId: 'f46a3927-0639-4165-99d8-a02a9d26095d',
+        eventType: 'page_view',
+        pagePath: '/'
+      })
+    });
+    assert.equal(privateAddressEvent.status, 202);
+    const privateAddressInsert = statements.find(statement =>
+      statement.sql.includes('INSERT INTO site_analytics_events')
+      && statement.parameters[0] === '61c7ca43-a11e-44e1-a8fc-f2d276a18f1d'
+    );
+    assert.equal(privateAddressInsert.parameters[5], null);
 
     const conversion = await fetch(`${baseUrl}/api/analytics/events`, {
       method: 'POST',
       headers: {
         Origin: 'https://butterbitebakers.web.app',
         'Content-Type': 'application/json',
-        'X-Forwarded-For': '203.0.113.42'
+        'X-Forwarded-For': '8.8.8.8, 10.30.0.9'
       },
       body: JSON.stringify({
         eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1e',
@@ -499,7 +520,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       && statement.parameters[2] === 'order_placed'
     );
     assert.equal(conversionInsert.parameters[4], '260dd507-1173-499b-9bbf-f1383d6c6adb');
-    assert.equal(conversionInsert.parameters[5], '203.0.113.42');
+    assert.equal(conversionInsert.parameters[5], '8.8.8.8');
 
     const invalidEvent = await fetch(`${baseUrl}/api/analytics/events`, {
       method: 'POST',
@@ -533,7 +554,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       recentEvents: [{
         event_type: 'page_view',
         page_path: '/',
-        public_ip: '203.0.113.42',
+        public_ip: '8.8.8.8',
         created_at: '2026-11-11T10:00:00.000Z'
       }]
     });

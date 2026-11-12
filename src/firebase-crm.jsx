@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { COOKIE_CATALOG, COOKIE_PACK_SIZES } from '../api/orders.js';
+import { normalizePublicIp } from '../api/ip-address.js';
 import { getStorefrontOrderMetrics } from './analytics.js';
 
 const statusLabels = {
@@ -494,8 +495,10 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
                 <div>
                   <strong>{event.event_type === 'order_placed' ? 'Order placed' : 'Storefront visit'}</strong>
                   <span>{event.page_path}</span>
-                  {(event.public_ip || event.ip_address) && (
-                    <span className="crm-activity-ip">Public IP · {event.public_ip || event.ip_address}</span>
+                  {(event.public_ip !== undefined || event.ip_address !== undefined) && (
+                    <span className="crm-activity-ip">
+                      Public IP · {normalizePublicIp(event.public_ip || event.ip_address) || 'unavailable'}
+                    </span>
                   )}
                 </div>
                 <time>{event.created_at ? new Date(event.created_at).toLocaleString('en-IN') : 'Just now'}</time>
