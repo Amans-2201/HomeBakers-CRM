@@ -226,8 +226,9 @@ export function createApp({
       }
 
       try {
+        const publicIp = request.ip;
         await pool.query(
-          `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref, ip_address)
+          `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref, public_ip)
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT DO NOTHING`,
           [
@@ -236,7 +237,7 @@ export function createApp({
             eventType,
             safePagePath,
             eventType === 'order_placed' ? conversionRef : null,
-            request.ip
+            publicIp
           ]
         );
         return response.status(202).json({ accepted: true });
@@ -308,7 +309,7 @@ export function createApp({
           [rangeDays]
         ),
         pool.query(
-          `SELECT event_type, page_path, ip_address, created_at
+          `SELECT event_type, page_path, public_ip, created_at
            FROM site_analytics_events
           WHERE created_at >= (((NOW() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1))::timestamp AT TIME ZONE 'Asia/Kolkata')
            ORDER BY created_at DESC

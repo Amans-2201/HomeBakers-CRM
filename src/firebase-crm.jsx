@@ -494,7 +494,9 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
                 <div>
                   <strong>{event.event_type === 'order_placed' ? 'Order placed' : 'Storefront visit'}</strong>
                   <span>{event.page_path}</span>
-                  {event.ip_address && <span className="crm-activity-ip">IP {event.ip_address}</span>}
+                  {(event.public_ip || event.ip_address) && (
+                    <span className="crm-activity-ip">Public IP · {event.public_ip || event.ip_address}</span>
+                  )}
                 </div>
                 <time>{event.created_at ? new Date(event.created_at).toLocaleString('en-IN') : 'Just now'}</time>
               </li>

@@ -436,8 +436,8 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       if (sql.includes('WITH days AS')) {
         return { rows: [{ date: '2026-11-11', visits: 5, uniqueVisitors: 4, conversions: 1 }] };
       }
-      if (sql.includes('SELECT event_type, page_path, ip_address')) {
-        return { rows: [{ event_type: 'page_view', page_path: '/', ip_address: '203.0.113.42', created_at: '2026-11-11T10:00:00.000Z' }] };
+      if (sql.includes('SELECT event_type, page_path, public_ip')) {
+        return { rows: [{ event_type: 'page_view', page_path: '/', public_ip: '203.0.113.42', created_at: '2026-11-11T10:00:00.000Z' }] };
       }
       return { rows: [] };
     }
@@ -466,7 +466,8 @@ test('records anonymous storefront analytics and exposes reports only to the bak
         eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1d',
         visitorId: 'f46a3927-0639-4165-99d8-a02a9d26095d',
         eventType: 'page_view',
-        pagePath: '/'
+        pagePath: '/',
+        publicIp: '198.51.100.8'
       })
     });
     assert.equal(pageView.status, 202);
@@ -532,7 +533,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       recentEvents: [{
         event_type: 'page_view',
         page_path: '/',
-        ip_address: '203.0.113.42',
+        public_ip: '203.0.113.42',
         created_at: '2026-11-11T10:00:00.000Z'
       }]
     });
