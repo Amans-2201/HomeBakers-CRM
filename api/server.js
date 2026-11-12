@@ -227,10 +227,17 @@ export function createApp({
 
       try {
         await pool.query(
-          `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref)
-           VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO site_analytics_events (event_id, visitor_id, event_type, page_path, conversion_ref, ip_address)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT DO NOTHING`,
-          [eventId, visitorId, eventType, safePagePath, eventType === 'order_placed' ? conversionRef : null]
+          [
+            eventId,
+            visitorId,
+            eventType,
+            safePagePath,
+            eventType === 'order_placed' ? conversionRef : null,
+            request.ip
+          ]
         );
         return response.status(202).json({ accepted: true });
       } catch (error) {
@@ -301,7 +308,7 @@ export function createApp({
           [rangeDays]
         ),
         pool.query(
-          `SELECT event_type, page_path, created_at
+          `SELECT event_type, page_path, ip_address, created_at
            FROM site_analytics_events
           WHERE created_at >= (((NOW() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1))::timestamp AT TIME ZONE 'Asia/Kolkata')
            ORDER BY created_at DESC

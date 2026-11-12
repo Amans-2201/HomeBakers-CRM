@@ -125,6 +125,7 @@ function downloadCrmInvoice(order) {
       <section><h2>Order details</h2><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Unit price</th><th class="number">Amount</th></tr></thead>
         <tbody>${invoiceRows || '<tr><td colspan="4">Order details unavailable</td></tr>'}</tbody></table>
         <div class="totals"><p><span>Subtotal</span><strong>${currency.format(Number(order.subtotal) || 0)}</strong></p>
+          ${Number(order.discountAmount) > 0 ? `<p><span>Coupon ${escapeInvoiceText(order.couponCode || '')} (${Number(order.discountPercent) || 0}% off)</span><strong>−${currency.format(Number(order.discountAmount))}</strong></p>` : ''}
           <p><span>Delivery fee</span><strong>${currency.format(Number(order.deliveryFee) || 0)}</strong></p>
           <p class="grand-total"><span>Total</span><strong>${currency.format(Number(order.total) || 0)}</strong></p>
           <p><span>Payment status</span><strong>${escapeInvoiceText(paymentStatus)}</strong></p></div></section>
@@ -174,6 +175,29 @@ function nextStatuses(order) {
   return [];
 }
 
+function CRMThemeToggle({ className }) {
+  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('butterBiteCRMDarkMode') === 'true');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark-mode', darkMode);
+    window.localStorage.setItem('butterBiteCRMDarkMode', String(darkMode));
+  }, [darkMode]);
+
+  return (
+    <button
+      aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-pressed={darkMode}
+      className={className}
+      onClick={() => setDarkMode(current => !current)}
+      title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+      type="button"
+    >
+      <span aria-hidden="true">{darkMode ? '☀' : '☾'}</span>
+      {darkMode ? 'Light mode' : 'Dark mode'}
+    </button>
+  );
+}
+
 function FirebaseLogin({ onSignedIn }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -206,8 +230,9 @@ function FirebaseLogin({ onSignedIn }) {
 
   return (
     <main className="login-shell">
+      <CRMThemeToggle className="quiet-button crm-login-theme-toggle" />
       <form className="login-card" onSubmit={submit}>
-        <div className="brand-mark" aria-hidden="true">HB</div>
+        <div className="brand-mark" aria-hidden="true">&lt;bbB_&gt;</div>
         <p className="eyebrow">BUTTER BITE BAKERS</p>
         <h1>Welcome back</h1>
         <p className="muted">Sign in with the baker account used by the ordering portal.</p>
@@ -257,6 +282,7 @@ const crmNavigationGroups = [
     label: 'Manage',
     links: [
       { id: 'customers', label: 'Customers', icon: '♙' },
+      { id: 'coupons', label: 'Coupons', icon: '%' },
       { id: 'orders', label: 'Orders', icon: '▤' },
       { id: 'invoices', label: 'Invoices', icon: '▧' }
     ]
@@ -272,7 +298,7 @@ function CRMPageLayout({ activePage, onNavigate, onLogout, children }) {
     <div className="crm-app-shell">
       <aside className="crm-sidebar">
         <a className="crm-sidebar-brand" href="/" aria-label="Butter Bite Bakers CRM">
-          <span className="crm-sidebar-mark">HB</span>
+          <span className="crm-sidebar-mark">&lt;bbB_&gt;</span>
           <span>Butter Bite Bakers<small>Bakery dashboard</small></span>
         </a>
         <nav aria-label="CRM navigation" className="crm-sidebar-nav">
@@ -294,6 +320,7 @@ function CRMPageLayout({ activePage, onNavigate, onLogout, children }) {
           ))}
         </nav>
         <div className="crm-sidebar-footer">
+          <CRMThemeToggle className="crm-nav-link crm-theme-toggle" />
           <a className="crm-nav-link" href="https://butterbitebakers.web.app/">
             <span aria-hidden="true">↗</span>Storefront
           </a>
@@ -464,14 +491,18 @@ function WebsiteAnalyticsPage({ user, orders, ordersLoading, activePage, onNavig
                 <span aria-hidden="true" className={`crm-activity-icon ${event.event_type === 'order_placed' ? 'is-conversion' : ''}`}>
                   {event.event_type === 'order_placed' ? '✓' : '↗'}
                 </span>
-                <div><strong>{event.event_type === 'order_placed' ? 'Order placed' : 'Storefront visit'}</strong><span>{event.page_path}</span></div>
+                <div>
+                  <strong>{event.event_type === 'order_placed' ? 'Order placed' : 'Storefront visit'}</strong>
+                  <span>{event.page_path}</span>
+                  {event.ip_address && <span className="crm-activity-ip">IP {event.ip_address}</span>}
+                </div>
                 <time>{event.created_at ? new Date(event.created_at).toLocaleString('en-IN') : 'Just now'}</time>
               </li>
             ))}
           </ol>
         </section>
       )}
-      <footer className="footer-note">Analytics use anonymous browser IDs and order references; no IP address or customer contact details are stored with site activity.</footer>
+      <footer className="footer-note">Site activity includes public IP addresses and anonymous browser IDs. Activity reports are available only to the authorized baker account.</footer>
     </main>
     </CRMPageLayout>
   );
@@ -736,6 +767,168 @@ function FirebaseCustomersPage({ user, onNavigate, onLogout }) {
   );
 }
 
+function FirebaseCouponsPage({ user, onNavigate, onLogout }) {
+  const [coupons, setCoupons] = useState([]);
+  const [code, setCode] = useState('NEW25');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [updatingCode, setUpdatingCode] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    const unsubscribe = window.firebase.firestore()
+      .collection('coupons')
+      .orderBy('createdAt', 'desc')
+      .onSnapshot(snapshot => {
+        setCoupons(snapshot.docs.map(document => ({ id: document.id, ...document.data() })));
+        setLoading(false);
+        setError('');
+      }, snapshotError => {
+        setLoading(false);
+        setError(snapshotError.code === 'permission-denied'
+          ? 'Coupon access denied. Sign in with the authorized baker account.'
+          : `Could not load coupons: ${snapshotError.message}`);
+      });
+    return unsubscribe;
+  }, []);
+
+  async function createCoupon(event) {
+    event.preventDefault();
+    const normalizedCode = code.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,30}$/.test(normalizedCode)) {
+      setError('Use 3–30 letters, numbers, hyphens, or underscores for the coupon code.');
+      setSuccess('');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const couponRef = window.firebase.firestore().collection('coupons').doc(normalizedCode);
+      const existingCoupon = await couponRef.get();
+      if (existingCoupon.exists) {
+        setError('That coupon code already exists. Expired coupons can be reactivated.');
+        return;
+      }
+      await couponRef.set({
+        code: normalizedCode,
+        discountPercent: 25,
+        status: 'active',
+        createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      });
+      setCode('');
+      setSuccess(`${normalizedCode} is active for 25% off each eligible first-five order.`);
+    } catch (saveError) {
+      setError(`Could not create coupon: ${saveError.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateCouponStatus(coupon) {
+    const nextStatus = coupon.status === 'active' ? 'expired' : 'active';
+    setUpdatingCode(coupon.code);
+    setError('');
+    setSuccess('');
+    try {
+      await window.firebase.firestore().collection('coupons').doc(coupon.id).update({
+        status: nextStatus,
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      });
+      setSuccess(`${coupon.code} is now ${nextStatus}.`);
+    } catch (updateError) {
+      setError(`Could not update ${coupon.code}: ${updateError.message}`);
+    } finally {
+      setUpdatingCode('');
+    }
+  }
+
+  return (
+    <CRMPageLayout activePage="coupons" onLogout={onLogout} onNavigate={onNavigate}>
+      <main className="dashboard-shell">
+        <header className="topbar">
+          <div className="topbar-actions">
+            <a className="quiet-button crm-storefront-link" href="https://butterbitebakers.web.app/">Storefront</a>
+          </div>
+        </header>
+        <section className="welcome-row">
+          <div>
+            <p className="eyebrow">PROMOTIONS · BUTTER BITE BAKERS</p>
+            <h1>Coupons</h1>
+            <p className="muted">Create a 25% coupon. Each customer can use an active code on their first five orders.</p>
+          </div>
+          <span className="live-indicator"><span />Synced with Firestore</span>
+        </section>
+
+        {error && <div className="error-banner" role="alert">{error}</div>}
+        {success && <div className="success-banner" role="status">{success}</div>}
+
+        <section className="panel crm-coupon-create">
+          <div className="panel-heading">
+            <div><p className="eyebrow">NEW PROMOTION</p><h2>Create a coupon code</h2></div>
+            <strong className="crm-coupon-discount">25% OFF</strong>
+          </div>
+          <form className="crm-coupon-form" onSubmit={createCoupon}>
+            <label htmlFor="crm-coupon-code">Coupon code
+              <input
+                autoCapitalize="characters"
+                autoComplete="off"
+                id="crm-coupon-code"
+                maxLength={30}
+                onChange={event => setCode(event.target.value.toUpperCase())}
+                placeholder="e.g. WELCOME25"
+                value={code}
+              />
+            </label>
+            <button className="primary-button" disabled={saving} type="submit">
+              {saving ? 'Creating…' : 'Create active coupon'}
+            </button>
+          </form>
+          <p className="muted crm-coupon-note">Codes are case-insensitive. Expired codes can be reactivated; each code remains valid for 25% off eligible orders.</p>
+        </section>
+
+        <section className="panel crm-coupon-list">
+          <div className="panel-heading">
+            <div><p className="eyebrow">FIRESTORE COUPONS</p><h2>Manage promotions</h2></div>
+            <span className="live-indicator">{coupons.length} {coupons.length === 1 ? 'coupon' : 'coupons'}</span>
+          </div>
+          {loading && <p className="loading-state">Loading coupons…</p>}
+          {!loading && coupons.length === 0 && <p className="empty-state">No coupons yet. Create a code above to launch your first offer.</p>}
+          {coupons.length > 0 && (
+            <div className="crm-coupon-table-wrap">
+              <table className="crm-coupon-table">
+                <thead><tr><th>Code</th><th>Offer</th><th>Per customer</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody>
+                  {coupons.map(coupon => (
+                    <tr key={coupon.id}>
+                      <td><strong>{coupon.code}</strong></td>
+                      <td>{coupon.discountPercent}% off cookie subtotal</td>
+                      <td>First 5 orders</td>
+                      <td><span className={`crm-coupon-status ${coupon.status === 'active' ? 'is-active' : 'is-expired'}`}>{coupon.status}</span></td>
+                      <td>
+                        <button
+                          className="quiet-button"
+                          disabled={updatingCode === coupon.code}
+                          onClick={() => { void updateCouponStatus(coupon); }}
+                          type="button"
+                        >{updatingCode === coupon.code ? 'Saving…' : coupon.status === 'active' ? 'Expire' : 'Reactivate'}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+        <footer className="footer-note">Coupon codes are available only to signed-in customers and validated by Firebase before order placement.</footer>
+      </main>
+    </CRMPageLayout>
+  );
+}
+
 function FirebaseInvoicesPage({ user, onLogout, onNavigate, orders, loading, error }) {
   const [search, setSearch] = useState('');
   const invoiceOrders = useMemo(() => orders.filter(isInvoiceOrder), [orders]);
@@ -819,6 +1012,7 @@ function FirebaseInvoicesPage({ user, onLogout, onNavigate, orders, loading, err
                   <div><dt>Fulfillment</dt><dd>{order.fulfillment === 'pickup' ? 'Picked up' : 'Delivered'}</dd></div>
                   <div><dt>Payment</dt><dd>{paymentLabel}</dd></div>
                   <div><dt>Customer contact</dt><dd>{[order.customer?.phone, order.customer?.email].filter(Boolean).join(' · ') || 'Not provided'}</dd></div>
+                  {Number(order.discountAmount) > 0 && <div><dt>Coupon discount</dt><dd>{order.couponCode} · {currency.format(Number(order.discountAmount))} off</dd></div>}
                   <div className="crm-invoice-items"><dt>Items</dt><dd>{(order.items || []).map(item => `${item.name} × ${item.quantity}`).join(', ') || 'Order details unavailable'}</dd></div>
                 </dl>
                 <button className="primary-button crm-invoice-download" onClick={() => downloadCrmInvoice(order)} type="button">Download invoice</button>
@@ -939,6 +1133,9 @@ function FirebaseOrdersCRM({ user, onLogout }) {
         user={user}
       />
     );
+  }
+  if (activePage === 'coupons') {
+    return <FirebaseCouponsPage onLogout={onLogout} onNavigate={setActivePage} user={user} />;
   }
   if (['dashboard', 'realtime', 'analytics'].includes(activePage)) {
     return <WebsiteAnalyticsPage
@@ -1323,7 +1520,7 @@ function FirebaseOrdersCRM({ user, onLogout }) {
                 {Number.isFinite(order.latitude) && Number.isFinite(order.longitude) && (
                   <p><strong>Map pin:</strong> <a href={`https://maps.google.com/?q=${encodeURIComponent(`${order.latitude},${order.longitude}`)}`} rel="noreferrer" target="_blank">Open delivery location</a></p>
                 )}
-                <p><strong>Subtotal:</strong> {currency.format(Number(order.subtotal || 0))} · <strong>Delivery:</strong> {currency.format(Number(order.deliveryFee || 0))}</p>
+                <p><strong>Subtotal:</strong> {currency.format(Number(order.subtotal || 0))}{Number(order.discountAmount) > 0 && <> · <strong>Coupon {order.couponCode}:</strong> −{currency.format(Number(order.discountAmount))}</>} · <strong>Delivery:</strong> {currency.format(Number(order.deliveryFee || 0))}</p>
                 {order.source && <p><strong>Received via:</strong> {sourceLabels[order.source] || order.source}{order.sourceNote ? ` · ${order.sourceNote}` : ''}</p>}
                 <p><strong>Placed:</strong> {formatTimestamp(order.statusTimestamps?.placed || order.createdAt)}</p>
               </div>

@@ -59,6 +59,9 @@ export function buildOrderEmail(order, documentId) {
     lines.length ? lines.join('\n') : 'No items listed',
     '',
     `Subtotal: ${currency.format(Number(order.subtotal) || 0)}`,
+    Number(order.discountAmount) > 0
+      ? `Coupon ${order.couponCode || ''} (${Number(order.discountPercent) || 0}% off): -${currency.format(Number(order.discountAmount))}`
+      : '',
     `Delivery fee: ${currency.format(Number(order.deliveryFee) || 0)}`,
     `Total: ${currency.format(Number(order.total) || 0)}`,
     `Status: ${order.status || 'pending'}${source}`
@@ -83,6 +86,7 @@ export function buildOrderEmail(order, documentId) {
       ${mapUrl ? `<br><a href="${escapeHtml(mapUrl)}">Open delivery map</a>` : ''}</p>
       <h3>Items</h3>${htmlItems}
       <p><strong>Subtotal:</strong> ${escapeHtml(currency.format(Number(order.subtotal) || 0))}<br>
+      ${Number(order.discountAmount) > 0 ? `<strong>Coupon ${escapeHtml(order.couponCode || '')} (${Number(order.discountPercent) || 0}% off):</strong> −${escapeHtml(currency.format(Number(order.discountAmount)))}<br>` : ''}
       <strong>Delivery fee:</strong> ${escapeHtml(currency.format(Number(order.deliveryFee) || 0))}<br>
       <strong>Total:</strong> ${escapeHtml(currency.format(Number(order.total) || 0))}<br>
       <strong>Status:</strong> ${escapeHtml(order.status || 'pending')}</p>

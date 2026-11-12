@@ -71,12 +71,15 @@ CREATE TABLE IF NOT EXISTS site_analytics_events (
     event_type TEXT NOT NULL CHECK (event_type IN ('page_view', 'order_placed')),
     page_path TEXT NOT NULL DEFAULT '/',
     conversion_ref UUID UNIQUE,
+    ip_address INET,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT site_analytics_conversion_ref_check CHECK (
         (event_type = 'order_placed' AND conversion_ref IS NOT NULL)
         OR (event_type = 'page_view' AND conversion_ref IS NULL)
     )
 );
+
+ALTER TABLE site_analytics_events ADD COLUMN IF NOT EXISTS ip_address INET;
 
 CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS orders_customer_id_idx ON orders (customer_id);

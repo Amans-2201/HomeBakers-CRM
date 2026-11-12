@@ -43,11 +43,12 @@ h1, h2, p { margin-top: 0; }
   border-radius: 17px;
   background: #71381f;
   color: #ffe4be;
-  font-family: Georgia, serif;
+  font-family: monospace;
   font-weight: 700;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
+  font-size: 11px;
 }
-.brand-mark.small { width: 39px; height: 39px; border-radius: 13px; font-size: 14px; }
+.brand-mark.small { width: 39px; height: 39px; border-radius: 13px; font-size: 8px; }
 .eyebrow {
   margin: 24px 0 8px;
   color: #a06a48;
@@ -402,7 +403,7 @@ td a:hover { color: var(--brown); }
 }
 .crm-sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 20px; color: var(--ink); font-size: 12px; font-weight: 700; text-decoration: none; }
 .crm-sidebar-brand small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 500; }
-.crm-sidebar-mark { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #71381f; color: #ffe4be; font: 700 12px Georgia, serif; }
+.crm-sidebar-mark { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #71381f; color: #ffe4be; font: 700 7px/1 monospace; letter-spacing: -1px; }
 .crm-sidebar-nav { display: grid; gap: 14px; }
 .crm-nav-group > p { margin: 0 8px 6px; color: #9c8a7c; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .crm-nav-link { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #78685e; font-size: 12px; text-align: left; text-decoration: none; }
@@ -411,6 +412,8 @@ td a:hover { color: var(--brown); }
 .crm-nav-link.is-active { background: #f9e8dc; color: var(--brown); font-weight: 700; }
 .crm-nav-link.is-active > span { color: #da6c27; }
 .crm-sidebar-footer { display: grid; gap: 3px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.crm-theme-toggle > span { font-size: 15px; }
+.crm-login-theme-toggle { position: fixed; top: 20px; right: 20px; z-index: 1; }
 .crm-main { min-width: 0; }
 .crm-main > .dashboard-shell { max-width: none; margin: 0; padding: 0 32px 38px; }
 .crm-main .topbar { justify-content: flex-end; }
@@ -437,22 +440,117 @@ td a:hover { color: var(--brown); }
 .crm-activity-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border-radius: 9px; background: #f6fbf8; }
 .crm-activity-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: #fff0e4; color: #da6c27; font-weight: 700; }
 .crm-activity-icon.is-conversion { background: #e5f4ec; color: #34765a; }
-.crm-activity-list li > div { display: grid; gap: 3px; }
+.crm-activity-list li > div { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
 .crm-activity-list strong { color: var(--ink); font-size: 11px; }
 .crm-activity-list li > div span, .crm-activity-list time { color: var(--muted); font-size: 10px; }
+.crm-activity-ip { font-family: monospace; }
 .crm-activity-list time { text-align: right; }
+.crm-coupon-create, .crm-coupon-list { margin-top: 20px; }
+.crm-coupon-discount { color: #34765a; font-size: 14px; white-space: nowrap; }
+.crm-coupon-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.crm-coupon-form label { display: grid; gap: 6px; color: var(--ink); font-size: 11px; font-weight: 700; }
+.crm-coupon-form input { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); font-size: 13px; }
+.crm-coupon-note { margin: 10px 0 0; font-size: 11px; }
+.crm-coupon-table-wrap { overflow-x: auto; }
+.crm-coupon-table { width: 100%; border-collapse: collapse; text-align: left; }
+.crm-coupon-table th, .crm-coupon-table td { padding: 11px 9px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 11px; white-space: nowrap; }
+.crm-coupon-table th { color: var(--muted); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.crm-coupon-status { display: inline-flex; padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: capitalize; }
+.crm-coupon-status.is-active { background: #e5f4ec; color: #34765a; }
+.crm-coupon-status.is-expired { background: #f3ece7; color: #78685e; }
+
+html.dark-mode {
+  color-scheme: dark;
+  --ink: #f3ece4;
+  --muted: #ad9d8d;
+  --brown: #f0c08e;
+  --cream: #211b17;
+  --line: #514034;
+  --white: #2b241f;
+  --green: #86c9a0;
+}
+html.dark-mode body { background: var(--cream); color: var(--ink); }
+html.dark-mode .login-shell { background: radial-gradient(ellipse at 50% 0%, #3a2f26 0, transparent 45%), var(--cream); }
+html.dark-mode :is(.login-card, .summary-card, .panel, .entry-form, .crm-customer-card, .crm-invoice-card, .crm-sidebar) {
+  border-color: var(--line);
+  background-color: var(--white);
+}
+html.dark-mode :is(.quiet-button, .form-grid input, .form-grid select, .form-grid textarea, .order-entry-row input, .order-entry-row select, .date-filters input, .search-box, .crm-customer-form input, .crm-customer-form textarea, .crm-coupon-form input, .crm-range-switch, .order-fulfillment-select) {
+  border-color: var(--line);
+  background-color: #302821;
+  color: var(--ink);
+}
+html.dark-mode .crm-sidebar { border-right-color: var(--line); }
+html.dark-mode .crm-sidebar-footer { border-top-color: var(--line); }
+html.dark-mode .topbar { border-bottom-color: var(--line); }
+html.dark-mode :is(.brand, .crm-sidebar-brand, .summary-card strong, .form-heading h3, .form-section-heading, .panel-heading h2, .manual-form-section-title, .favourites-list li strong, td strong, .crm-customer-heading h3, .crm-invoice-heading h3, .crm-invoice-total) {
+  color: var(--ink);
+}
+html.dark-mode :is(.muted, .brand small, .summary-card p, .summary-card span, .crm-nav-group > p, .crm-nav-link, .crm-nav-link > span, .form-grid label, .manual-form-grid label, .manual-cookie-row label, .date-filters label, .form-section-heading, .favourites-list li small, th, td, td a, .secondary-detail, .crm-customer-details dd, .crm-invoice-details dd, .crm-customer-form label, .crm-chart-day small) {
+  color: #c4b5a7;
+}
+html.dark-mode .quiet-button:hover { border-color: #8d684e; color: #f4b05f; }
+html.dark-mode .crm-nav-link:hover { background: #3a2f26; color: var(--ink); }
+html.dark-mode .crm-nav-link.is-active { background: #4a3428; color: #f4b05f; }
+html.dark-mode .crm-nav-link.is-active > span { color: #f4b05f; }
+html.dark-mode .crm-live-order {
+  border-color: var(--line);
+  background: var(--white);
+}
+html.dark-mode .crm-order-heading h3 { color: var(--ink); }
+html.dark-mode .crm-order-details { border-top-color: var(--line); }
+html.dark-mode .crm-order-details p { color: #d3c5b7; }
+html.dark-mode .crm-order-details strong { color: var(--ink); }
+html.dark-mode .crm-order-status { background: #3a2f26; color: #f0c08e; }
+html.dark-mode :is(.status-delivered, .status-picked_up) { background: #244333; color: #a7f3d0; }
+html.dark-mode .status-rejected { background: #492b28; color: #f2aaa1; }
+html.dark-mode .crm-live-filters :is(input, select) {
+  border-color: var(--line);
+  background: #302821;
+  color: var(--ink);
+}
+html.dark-mode :is(.crm-analytics-chart, .crm-customer-details, .crm-customer-form, .crm-invoice-details, .crm-order-details, .crm-order-timeline) {
+  border-color: var(--line);
+}
+html.dark-mode :is(td, .crm-customer-details, .crm-invoice-details, .crm-order-details, .crm-customer-form) {
+  border-color: var(--line);
+}
+html.dark-mode .crm-timeline-stage > div { background: var(--white); }
+html.dark-mode .crm-timeline-marker { border-color: #796858; background: #302821; }
+html.dark-mode .crm-timeline-line { background: #514034; }
+html.dark-mode .crm-timeline-stage strong { color: #a7f3d0; }
+html.dark-mode .crm-timeline-stage strong.is-upcoming,
+html.dark-mode .crm-timeline-stage time { color: #ad9d8d; }
+html.dark-mode .crm-activity-list li { background: #26332b; }
+html.dark-mode .crm-activity-icon { background: #3a2f26; }
+html.dark-mode .crm-activity-icon.is-conversion { background: #244333; }
+html.dark-mode .crm-chart-bars { border-bottom-color: var(--line); }
+html.dark-mode .crm-chart-bars { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 46px, #40362f 47px, transparent 48px); }
+html.dark-mode .chart-gridline { stroke: #514034; }
+html.dark-mode .pie-svg path, html.dark-mode .treemap-svg rect { stroke: #302821; }
+html.dark-mode .crm-coupon-table th,
+html.dark-mode .crm-coupon-table td { border-bottom-color: var(--line); }
+html.dark-mode .crm-coupon-status.is-active { background: #244333; color: #a7f3d0; }
+html.dark-mode .crm-coupon-status.is-expired { background: #3a2f26; color: #d3c5b7; }
+html.dark-mode .crm-payment-notice { border-color: #79613f; background: #3c3020; color: #f0c98e; }
+html.dark-mode .crm-payment-notice p { color: #d3c5b7; }
+html.dark-mode .crm-payment-confirmed { background: #244333; color: #a7f3d0; }
+html.dark-mode .crm-timeline-marker.is-complete { border-color: #86c9a0; background: #34765a; }
+html.dark-mode .crm-timeline-line.is-complete { background: #568366; }
+html.dark-mode :is(input, select, textarea) { color-scheme: dark; }
 
 @media (max-width: 850px) {
   .crm-app-shell { grid-template-columns: 1fr; }
   .crm-sidebar { position: sticky; z-index: 5; height: auto; padding: 10px 14px; border-right: 0; border-bottom: 1px solid #e8dfd7; }
   .crm-sidebar-brand { padding: 0 4px 10px; }
-  .crm-sidebar-nav { display: flex; gap: 9px; overflow-x: auto; }
+  .crm-sidebar-nav { display: flex; min-width: 0; max-width: 100%; gap: 9px; overflow-x: auto; overscroll-behavior-x: contain; }
   .crm-nav-group { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; }
   .crm-nav-group > p { display: none; }
   .crm-nav-link { width: auto; flex: 0 0 auto; padding: 8px; }
   .crm-sidebar-footer { display: flex; gap: 2px; margin: 8px 0 0; padding-top: 7px; }
   .crm-main > .dashboard-shell { padding-right: 22px; padding-left: 22px; }
   .crm-overview-grid, .crm-site-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-coupon-table { min-width: 590px; }
 }
 @media (max-width: 560px) {
   .crm-sidebar { padding: 8px; }
@@ -462,12 +560,15 @@ td a:hover { color: var(--brown); }
   .crm-nav-link > span { width: 13px; font-size: 13px; }
   .crm-sidebar-footer { justify-content: flex-end; }
   .crm-nav-link { min-height: 40px; }
+  .crm-sidebar-nav .crm-nav-link { min-height: 44px; }
   .crm-main > .dashboard-shell { padding-right: 14px; padding-left: 14px; }
   .crm-analytics-toolbar { align-items: flex-start; flex-direction: column; }
   .crm-analytics-chart { min-height: 200px; gap: 5px; }
   .crm-chart-bars { height: 155px; }
   .crm-activity-list li { grid-template-columns: 30px minmax(0, 1fr); }
   .crm-activity-list time { grid-column: 2; text-align: left; }
+  .crm-coupon-form { grid-template-columns: 1fr; }
+  .crm-coupon-form .primary-button { width: 100%; }
 }
 @media (max-width: 380px) {
   .crm-sidebar-brand { font-size: 11px; }

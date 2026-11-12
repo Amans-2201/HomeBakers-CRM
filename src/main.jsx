@@ -55,7 +55,7 @@ function Login({ onLogin }) {
   return (
     <main className="login-shell">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand-mark" aria-hidden="true">HB</div>
+        <div className="brand-mark" aria-hidden="true">&lt;bbB_&gt;</div>
         <p className="eyebrow">BUTTER BITE BAKERS</p>
         <h1>Welcome back</h1>
         <p className="muted">Sign in to review orders and customer activity.</p>
@@ -526,7 +526,7 @@ function Dashboard({ onLogout }) {
     <main className="dashboard-shell">
       <header className="topbar">
         <a className="brand" href="/" aria-label="Butter Bite Bakers home">
-          <span className="brand-mark small">HB</span>
+          <span className="brand-mark small">&lt;bbB_&gt;</span>
           <span>Butter Bite Bakers <small>Bakery dashboard</small></span>
         </a>
         <div className="topbar-actions">

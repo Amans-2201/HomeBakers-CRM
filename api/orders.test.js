@@ -436,8 +436,8 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       if (sql.includes('WITH days AS')) {
         return { rows: [{ date: '2026-11-11', visits: 5, uniqueVisitors: 4, conversions: 1 }] };
       }
-      if (sql.includes('SELECT event_type, page_path')) {
-        return { rows: [{ event_type: 'page_view', page_path: '/', created_at: '2026-11-11T10:00:00.000Z' }] };
+      if (sql.includes('SELECT event_type, page_path, ip_address')) {
+        return { rows: [{ event_type: 'page_view', page_path: '/', ip_address: '203.0.113.42', created_at: '2026-11-11T10:00:00.000Z' }] };
       }
       return { rows: [] };
     }
@@ -459,7 +459,8 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       method: 'POST',
       headers: {
         Origin: 'https://butterbitebakers.web.app',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Forwarded-For': '203.0.113.42'
       },
       body: JSON.stringify({
         eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1d',
@@ -470,12 +471,18 @@ test('records anonymous storefront analytics and exposes reports only to the bak
     });
     assert.equal(pageView.status, 202);
     assert.deepEqual(await pageView.json(), { accepted: true });
+    const pageViewInsert = statements.find(statement =>
+      statement.sql.includes('INSERT INTO site_analytics_events')
+      && statement.parameters[2] === 'page_view'
+    );
+    assert.equal(pageViewInsert.parameters[5], '203.0.113.42');
 
     const conversion = await fetch(`${baseUrl}/api/analytics/events`, {
       method: 'POST',
       headers: {
         Origin: 'https://butterbitebakers.web.app',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Forwarded-For': '203.0.113.42'
       },
       body: JSON.stringify({
         eventId: '51c7ca43-a11e-44e1-a8fc-f2d276a18f1e',
@@ -491,6 +498,7 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       && statement.parameters[2] === 'order_placed'
     );
     assert.equal(conversionInsert.parameters[4], '260dd507-1173-499b-9bbf-f1383d6c6adb');
+    assert.equal(conversionInsert.parameters[5], '203.0.113.42');
 
     const invalidEvent = await fetch(`${baseUrl}/api/analytics/events`, {
       method: 'POST',
@@ -524,14 +532,10 @@ test('records anonymous storefront analytics and exposes reports only to the bak
       recentEvents: [{
         event_type: 'page_view',
         page_path: '/',
+        ip_address: '203.0.113.42',
         created_at: '2026-11-11T10:00:00.000Z'
       }]
     });
-    assert.ok(statements.some(statement =>
-      statement.sql.includes('INSERT INTO site_analytics_events')
-      && statement.parameters[2] === 'page_view'
-    ));
-
     const invalidRange = await fetch(`${baseUrl}/api/admin/site-analytics?range=365d`, {
       headers: { Authorization: 'Bearer baker-token' }
     });
